@@ -53,8 +53,8 @@ spinner() {
 echo ""
 echo "${GREEN}${BOLD}"
 echo "  ╔═══════════════════════════════════════════╗"
-echo "  ║         Evo CRM Community Setup            ║"
-echo "  ║   Open-Source AI-Powered CRM Platform     ║"
+echo "  ║         ATTO FLOW Community Setup          ║"
+echo "  ║   Modular SaaS CRM, WhatsApp and AI       ║"
 echo "  ╚═══════════════════════════════════════════╝"
 echo "${RESET}"
 echo ""
@@ -108,21 +108,34 @@ SUBMODULE_DIRS=(
   "evo-bot-runtime"
 )
 
-needs_init=false
-for dir in "${SUBMODULE_DIRS[@]}"; do
-  if [ ! -f "$dir/Dockerfile" ] && [ ! -f "$dir/docker/Dockerfile" ] && [ ! -f "$dir/package.json" ]; then
-    needs_init=true
-    break
-  fi
-done
+has_local_sources() {
+  [ -f "evo-auth-service-community/Dockerfile" ] &&
+  [ -f "evo-ai-crm-community/docker/Dockerfile" ] &&
+  [ -f "evo-ai-frontend-community/Dockerfile" ] &&
+  [ -f "evo-ai-processor-community/Dockerfile" ] &&
+  [ -f "evo-ai-core-service-community/Dockerfile" ] &&
+  [ -f "evo-bot-runtime/Dockerfile" ]
+}
 
-if [ "$needs_init" = true ]; then
-  info "Initializing submodules (this may take a few minutes)..."
-  git submodule update --init --recursive
-  success "Submodules initialized"
-else
+COMPOSE_FILE="docker-compose.yml"
+
+if has_local_sources; then
   success "Submodules already initialized"
+else
+  info "Local service Dockerfiles not found. Trying to initialize submodules..."
+  if git submodule update --init --recursive && has_local_sources; then
+    success "Submodules initialized"
+  else
+    warn "Submodules are unavailable or incomplete. Falling back to prebuilt Docker Hub images."
+    COMPOSE_FILE="docker-compose.images.yaml"
+  fi
 fi
+
+compose() {
+  docker compose -f "$COMPOSE_FILE" "$@"
+}
+
+info "Using compose file: $COMPOSE_FILE"
 
 echo ""
 
@@ -132,17 +145,12 @@ echo ""
 info "Configuring environment..."
 
 if [ -f .env ]; then
-  warn ".env file already exists."
-  read -r -p "  Overwrite with defaults? [y/N] " response
-  case "$response" in
-    [yY][eE][sS]|[yY])
-      cp .env.example .env
-      success "Overwrote .env with defaults"
-      ;;
-    *)
-      success "Keeping existing .env"
-      ;;
-  esac
+  if [ "${FORCE_ENV_DEFAULTS:-false}" = "true" ]; then
+    cp .env.example .env
+    success "Overwrote .env with defaults because FORCE_ENV_DEFAULTS=true"
+  else
+    success "Keeping existing .env"
+  fi
 else
   cp .env.example .env
   success "Created .env from .env.example"
@@ -151,30 +159,36 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Step 4: Build Docker images
+# Step 4: Build or pull Docker images
 # ---------------------------------------------------------------------------
-info "Building Docker images (this takes 5-15 minutes on first run)..."
-echo ""
-
-docker compose build
-
-echo ""
-success "All images built successfully"
+if [ "$COMPOSE_FILE" = "docker-compose.yml" ]; then
+  info "Building Docker images (this takes 5-15 minutes on first run)..."
+  echo ""
+  compose build
+  echo ""
+  success "All images built successfully"
+else
+  info "Pulling prebuilt Docker images..."
+  echo ""
+  compose pull
+  echo ""
+  success "All images pulled successfully"
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
 # Step 5: Start infrastructure (Postgres + Redis)
 # ---------------------------------------------------------------------------
 info "Starting database and cache..."
-docker compose up -d postgres redis mailhog
+compose up -d postgres redis mailhog
 
 info "Waiting for PostgreSQL to be ready..."
 retries=0
 max_retries=30
-until docker compose exec -T postgres pg_isready -U postgres > /dev/null 2>&1; do
+until compose exec -T postgres pg_isready -U postgres > /dev/null 2>&1; do
   retries=$((retries + 1))
   if [ "$retries" -ge "$max_retries" ]; then
-    fail "PostgreSQL did not become ready in time. Check: docker compose logs postgres"
+    fail "PostgreSQL did not become ready in time. Check: docker compose -f $COMPOSE_FILE logs postgres"
   fi
   sleep 2
 done
@@ -182,10 +196,10 @@ success "PostgreSQL is ready"
 
 info "Waiting for Redis to be ready..."
 retries=0
-until docker compose exec -T redis redis-cli -a evoai_redis_pass ping > /dev/null 2>&1; do
+until compose exec -T redis redis-cli -a evoai_redis_pass ping > /dev/null 2>&1; do
   retries=$((retries + 1))
   if [ "$retries" -ge "$max_retries" ]; then
-    fail "Redis did not become ready in time. Check: docker compose logs redis"
+    fail "Redis did not become ready in time. Check: docker compose -f $COMPOSE_FILE logs redis"
   fi
   sleep 2
 done
@@ -197,7 +211,7 @@ echo ""
 # Step 6: Seed Auth service (must be first)
 # ---------------------------------------------------------------------------
 info "Seeding Auth service (creating default account and user)..."
-docker compose run --rm evo-auth sh -c "bundle exec rails db:create && bundle exec rails db:migrate && bundle exec rails db:seed"
+compose run --rm evo-auth sh -c "bundle exec rails db:create && bundle exec rails db:migrate && bundle exec rails db:seed"
 success "Auth service seeded"
 
 echo ""
@@ -206,7 +220,7 @@ echo ""
 # Step 7: Seed CRM service
 # ---------------------------------------------------------------------------
 info "Seeding CRM service (creating default inbox)..."
-docker compose run --rm evo-crm sh -c "bundle exec rails db:prepare && bundle exec rails db:seed"
+compose run --rm evo-crm sh -c "bundle exec rails db:prepare && bundle exec rails db:seed"
 success "CRM service seeded"
 
 echo ""
@@ -215,7 +229,7 @@ echo ""
 # Step 8: Start all services
 # ---------------------------------------------------------------------------
 info "Starting all services..."
-docker compose up -d
+compose up -d
 
 echo ""
 info "Waiting for services to become healthy (this may take 1-2 minutes)..."
@@ -224,7 +238,7 @@ sleep 10
 echo ""
 echo "${GREEN}${BOLD}"
 echo "  ╔═══════════════════════════════════════════════════════╗"
-echo "  ║           Evo CRM Community is running!                ║"
+echo "  ║           ATTO FLOW Community is running!                ║"
 echo "  ╚═══════════════════════════════════════════════════════╝"
 echo "${RESET}"
 echo ""

@@ -4,10 +4,10 @@
   </a>
 </p>
 
-<h1 align="center">Evo CRM Community</h1>
+<h1 align="center">ATTO FLOW Community</h1>
 
 <p align="center">
-  Open-source, single-tenant AI-powered customer support platform — by Evolution Foundation.
+  Open-source foundation for ATTO FLOW — modular SaaS for CRM, WhatsApp, automation, ATTOZAP and internal ATTO AI.
 </p>
 
 <p align="center">
@@ -23,6 +23,20 @@
   <a href="https://evolutionfoundation.com.br/community">Community</a> &middot;
   <a href="mailto:suporte@evofoundation.com.br">Support</a>
 </p>
+
+---
+
+## ATTO FLOW direction
+
+This repository is being adapted into **ATTO FLOW**, the main modular SaaS platform for automation, CRM, WhatsApp, customer service, campaigns, lead management, teams and commercial productivity.
+
+Inside ATTO FLOW, **ATTOZAP** is the commercial WhatsApp/CRM/campaigns module and **ATTO AI** is an internal intelligence layer consumed by platform modules. ATTO AI must not appear as a standalone user-facing product; it is the internal brain for model routing, local LLaMA, external AI providers, RAG, memory, insights and intelligent automations.
+
+See:
+
+- [ATTO FLOW architecture](./docs/atto-flow/README.md)
+- [ATTO AI module](./docs/atto-flow/atto-ai.md)
+- [ATTOZAP module](./docs/attozap/README.md)
 
 ---
 
@@ -129,7 +143,21 @@ git submodule update --init --recursive
 git submodule update --remote --merge
 ```
 
-### 3. Setup each service
+### 3. Start from source or prebuilt images
+
+For local development from source, keep the submodules initialized and use the default compose file:
+
+```bash
+make setup
+```
+
+If the submodules are unavailable or their Dockerfiles are missing, the Makefile and `setup.sh` automatically fall back to `docker-compose.images.yaml`, which pulls the published Docker Hub images instead of trying to build local service folders. You can also force that mode explicitly:
+
+```bash
+COMPOSE_FILE=docker-compose.images.yaml make setup
+```
+
+### 4. Setup each service
 
 Refer to each service's own README for environment configuration, setup and seed instructions:
 
