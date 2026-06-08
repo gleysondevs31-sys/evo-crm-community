@@ -1,0 +1,22 @@
+.git
+.github
+.env
+.env.*
+_evo*
+node_modules
+coverage
+dist
+.tmp
+tmp
+.DS_Store
+
+# Service submodules are not required by the Render preview image.
+evo-auth-service-community
+evo-ai-crm-community
+evo-ai-frontend-community
+evo-ai-processor-community
+evo-ai-core-service-community
+evo-bot-runtime
+evo-nexus
+evolution-api
+evolution-go

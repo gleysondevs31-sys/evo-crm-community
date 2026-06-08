@@ -37,6 +37,21 @@ See:
 - [ATTO FLOW architecture](./docs/atto-flow/README.md)
 - [ATTO AI module](./docs/atto-flow/atto-ai.md)
 - [ATTOZAP module](./docs/attozap/README.md)
+- [Render deploy guide](./docs/atto-flow/render.md)
+
+---
+
+## Render preview
+
+This repository includes a root `Dockerfile` and `render.yaml` so Render can build the ATTO FLOW preview without looking for Dockerfiles inside missing submodules. The preview exposes `/`, `/healthz`, `/api/status`, `/api/modules` and JSON documentation routes.
+
+For local verification:
+
+```bash
+PORT=10000 node apps/render-preview/server.js
+```
+
+For Render instructions, see [docs/atto-flow/render.md](./docs/atto-flow/render.md).
 
 ---
 
