@@ -6,11 +6,12 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=10000
 
-COPY apps/render-preview ./apps/render-preview
-COPY docs/atto-flow ./docs/atto-flow
-COPY docs/attozap ./docs/attozap
-COPY modules/atto-ai/README.md ./modules/atto-ai/README.md
+COPY package.json ./package.json
+COPY apps ./apps
+COPY modules ./modules
+COPY packages ./packages
+COPY docs ./docs
 
 EXPOSE 10000
 
-CMD ["node", "apps/render-preview/server.js"]
+CMD ["node", "apps/api/server.js"]

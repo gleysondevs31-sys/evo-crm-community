@@ -44,12 +44,12 @@ See:
 
 ## Render preview
 
-This repository includes a root `Dockerfile` and `render.yaml` so Render can build the ATTO FLOW preview without looking for Dockerfiles inside missing submodules. The preview exposes `/`, `/healthz`, `/api/status`, `/api/modules` and JSON documentation routes.
+This repository includes a root `Dockerfile` and `render.yaml` so Render can build the ATTO FLOW modular MVP without looking for Dockerfiles inside missing submodules. The API serves the initial web UI at `/` and exposes `/healthz`, `/api/status`, `/api/dashboard`, `/api/crm/leads`, `/api/attozap/inbox` and `/api/atto-ai/logs`.
 
 For local verification:
 
 ```bash
-PORT=10000 node apps/render-preview/server.js
+PORT=10000 node apps/api/server.js
 ```
 
 For Render instructions, see [docs/atto-flow/render.md](./docs/atto-flow/render.md).

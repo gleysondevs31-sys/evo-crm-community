@@ -6,7 +6,7 @@ Este repositório possui um **Dockerfile na raiz** para evitar o erro da Render:
 failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
 ```
 
-A Render procura `./Dockerfile` por padrão. O Dockerfile raiz sobe um preview leve da **ATTO FLOW Community** sem depender dos submodules nem dos Dockerfiles dos serviços Evo.
+A Render procura `./Dockerfile` por padrão. O Dockerfile raiz sobe o MVP modular da **ATTO FLOW Community** (`apps/api` servindo a UI de `apps/web`) sem depender dos submodules nem dos Dockerfiles dos serviços Evo.
 
 ## Serviço criado
 
@@ -20,13 +20,13 @@ A Render procura `./Dockerfile` por padrão. O Dockerfile raiz sobe um preview l
 
 | Rota | Uso |
 |---|---|
-| `/` | Landing page de preview ATTO FLOW. |
+| `/` | Interface inicial da ATTO FLOW servida pela API. |
 | `/healthz` | Health check da Render. |
-| `/api/status` | Status JSON do preview. |
-| `/api/modules` | Lista de módulos internos. |
-| `/docs/atto-flow` | Documentação ATTO FLOW em JSON. |
-| `/docs/atto-ai` | Documentação ATTO AI em JSON. |
-| `/docs/attozap` | Documentação ATTOZAP em JSON. |
+| `/api/status` | Status JSON da API modular. |
+| `/api/dashboard` | Métricas iniciais do CRM/ATTOZAP/relatórios. |
+| `/api/crm/leads` | Leads do CRM. |
+| `/api/attozap/inbox` | Inbox comercial do ATTOZAP. |
+| `/api/atto-ai/logs` | Logs de uso da ATTO AI interna. |
 
 ## Deploy via Dashboard
 
@@ -44,18 +44,18 @@ O arquivo `render.yaml` já define o serviço `atto-flow-preview`. Use **New + B
 ## Teste local com Docker
 
 ```bash
-docker build -t atto-flow-preview .
-docker run --rm -p 10000:10000 atto-flow-preview
+docker build -t atto-flow .
+docker run --rm -p 10000:10000 atto-flow
 curl http://localhost:10000/healthz
 ```
 
 ## Teste local sem Docker
 
 ```bash
-PORT=10000 node apps/render-preview/server.js
+PORT=10000 node apps/api/server.js
 curl http://localhost:10000/healthz
 ```
 
 ## Próximos passos
 
-Este preview é uma base de validação para Render. A evolução natural é plugar os módulos reais da ATTO FLOW em `apps/api`, `apps/web`, `apps/workers` e substituir gradualmente o preview por serviços produtivos.
+Este MVP já sobe `apps/api`, serve a UI inicial em `apps/web` e usa módulos internos em memória. A evolução natural é substituir os stores em memória por `packages/database` persistente com migrations e ativar workers reais em `apps/workers`.

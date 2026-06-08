@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ATTO FLOW</title>
+  <style>
+    :root { color-scheme: dark; --bg: #05050a; --panel: rgba(18,18,30,.86); --line: rgba(139,92,246,.28); --text: #f8f7ff; --muted: #aaa6c8; --purple: #8b5cf6; --blue: #22d3ee; --green: #34d399; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: radial-gradient(circle at 20% 0%, rgba(139,92,246,.35), transparent 32rem), radial-gradient(circle at 80% 10%, rgba(34,211,238,.18), transparent 30rem), var(--bg); color: var(--text); }
+    main { width: min(1200px, calc(100% - 32px)); margin: auto; padding: 36px 0; }
+    .hero, .card { border: 1px solid var(--line); background: var(--panel); border-radius: 28px; box-shadow: 0 24px 80px rgba(0,0,0,.35); }
+    .hero { padding: clamp(28px, 5vw, 58px); }
+    h1 { font-size: clamp(44px, 8vw, 88px); line-height: .92; margin: 12px 0; }
+    h2 { margin: 0 0 16px; }
+    p { color: var(--muted); line-height: 1.6; }
+    .gradient { background: linear-gradient(90deg, var(--purple), var(--blue)); -webkit-background-clip: text; color: transparent; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 18px; }
+    .card { padding: 22px; }
+    .metric { font-size: 34px; font-weight: 900; }
+    .badge { color: var(--green); font-size: 12px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
+    .kanban { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 8px; }
+    .lead { border: 1px solid var(--line); border-radius: 18px; padding: 14px; margin: 10px 0; background: rgba(255,255,255,.04); }
+    button { border: 0; border-radius: 999px; background: linear-gradient(90deg, var(--purple), var(--blue)); color: white; padding: 10px 14px; font-weight: 800; cursor: pointer; }
+    pre { white-space: pre-wrap; color: #ddd7ff; background: rgba(0,0,0,.28); border-radius: 18px; padding: 16px; border: 1px solid var(--line); }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div class="badge">SaaS modular ativo</div>
+      <h1>ATTO <span class="gradient">FLOW</span></h1>
+      <p>CRM, ATTOZAP, automações, relatórios, gamificação e ATTO AI interna em uma base executável para evoluir o produto completo.</p>
+    </section>
+
+    <section class="grid" id="metrics"></section>
+
+    <h2 style="margin-top: 30px">Pipeline CRM</h2>
+    <section class="kanban" id="kanban"></section>
+
+    <h2 style="margin-top: 30px">ATTOZAP Inbox</h2>
+    <section class="grid" id="inbox"></section>
+
+    <h2 style="margin-top: 30px">ATTO AI Logs</h2>
+    <pre id="aiLogs">Carregando...</pre>
+  </main>
+
+  <script>
+    async function api(path, options) {
+      const res = await fetch(path, { headers: { 'content-type': 'application/json' }, ...options });
+      return res.json();
+    }
+
+    async function load() {
+      const [dashboard, stages, leads, inbox, logs] = await Promise.all([
+        api('/api/dashboard'),
+        api('/api/crm/stages'),
+        api('/api/crm/leads'),
+        api('/api/attozap/inbox'),
+        api('/api/atto-ai/logs'),
+      ]);
+
+      document.getElementById('metrics').innerHTML = [
+        ['Leads', dashboard.totalLeads],
+        ['Conversas ativas', dashboard.activeConversations],
+        ['Vendas', dashboard.wonLeads],
+        ['Conversão', `${dashboard.conversionRate}%`],
+        ['Conexões online', dashboard.connectionsOnline],
+        ['Campanhas', dashboard.campaigns],
+      ].map(([label, value]) => `<article class="card"><div class="badge">${label}</div><div class="metric">${value}</div></article>`).join('') + `<article class="card" style="grid-column: 1/-1"><h2>Insight ATTO AI</h2><p>${dashboard.aiInsight}</p></article>`;
+
+      document.getElementById('kanban').innerHTML = stages.stages.slice(0, 8).map(stage => {
+        const cards = leads.leads.filter(lead => lead.stage === stage).map(lead => `<div class="lead"><strong>${lead.name}</strong><p>${lead.origin} • score ${lead.score}</p><button onclick="suggest('${lead.id}')">Sugerir resposta</button></div>`).join('');
+        return `<article class="card"><h3>${stage}</h3>${cards || '<p>Sem leads</p>'}</article>`;
+      }).join('');
+
+      document.getElementById('inbox').innerHTML = inbox.conversations.map(item => `<article class="card"><div class="badge">${item.stage}</div><h3>${item.leadName}</h3><p>${item.preview}</p></article>`).join('');
+      document.getElementById('aiLogs').textContent = JSON.stringify(logs.logs, null, 2);
+    }
+
+    async function suggest(leadId) {
+      const data = await api(`/api/attozap/leads/${leadId}/suggest-reply`);
+      alert(data.suggestion || 'Sem sugestão');
+      load();
+    }
+
+    load();
+  </script>
+</body>
+</html>

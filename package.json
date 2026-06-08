@@ -1,0 +1,17 @@
+{
+  "name": "atto-flow-community",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ATTO FLOW modular SaaS foundation with CRM, ATTOZAP and internal ATTO AI modules.",
+  "scripts": {
+    "start": "node apps/api/server.js",
+    "api": "node apps/api/server.js",
+    "web": "node apps/web/server.js",
+    "worker": "node apps/workers/worker.js",
+    "render-preview": "node apps/render-preview/server.js",
+    "check": "node --check apps/api/server.js && node --check apps/web/server.js && node --check apps/workers/worker.js && node --check apps/render-preview/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
