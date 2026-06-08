@@ -73,7 +73,7 @@ async function route(req, res) {
 
   if (isKnownPage(url.pathname)) {
     const indexPath = join(process.cwd(), 'apps/web/index.html');
-    return sendHtml(res, renderPage(readFileSync(indexPath, 'utf8'), url.pathname));
+    return sendHtml(res, renderPage(readFileSync(indexPath, 'utf8'), url.pathname, ctx));
   }
 
   if (url.pathname.startsWith('/assets/')) {
@@ -223,7 +223,76 @@ async function route(req, res) {
   }
 
   const indexPath = join(process.cwd(), 'apps/web/index.html');
-  return sendHtml(res, renderPage(readFileSync(indexPath, 'utf8'), '/404'), 404);
+  return sendHtml(res, renderPage(readFileSync(indexPath, 'utf8'), '/404', ctx), 404);
+}
+
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function renderInitialContent(pathname, ctx) {
+  if (pathname === '/') {
+    const dashboard = app.reports.dashboard(ctx);
+    const inbox = app.attozap.inbox(ctx);
+    const plans = app.billing.plans();
+    const metrics = [
+      ['Leads', dashboard.totalLeads],
+      ['Conversas', dashboard.activeConversations],
+      ['Conexões', dashboard.connectionsOnline],
+      ['Campanhas', dashboard.campaigns],
+    ]
+      .map(([label, value]) => `<div class="card"><div class="eyebrow">${escapeHtml(label)}</div><h3>${escapeHtml(value)}</h3></div>`)
+      .join('');
+    const inboxHtml = inbox
+      .map((conversation) => `<div class="lead-card"><strong>${escapeHtml(conversation.leadName)}</strong><p>${escapeHtml(conversation.preview)}</p></div>`)
+      .join('');
+    const features = ['ATTOZAP', 'CRM', 'AUTOMAÇÃO', 'ATTO AI', 'RELATÓRIOS', 'GAMIFICAÇÃO', 'OMNICHANNEL', 'ADMIN ENTERPRISE']
+      .map((name, index) => `<div class="card"><div class="eyebrow">0${index + 1}</div><h3>${name}</h3><p>${escapeHtml(plans[index % plans.length].name)} ready · modular · escalável.</p></div>`)
+      .join('');
+
+    return `
+      <section class="hero">
+        <div class="eyebrow">SaaS enterprise para operação comercial</div>
+        <h1>Venda, atenda e automatize com <span class="gradient">ATTO FLOW</span>.</h1>
+        <p class="lead">Substitua planilhas, WhatsApp bagunçado e processos manuais por CRM, multiatendimento, campanhas, automação, relatórios, gamificação e ATTO AI em uma única plataforma.</p>
+        <div class="hero-actions"><a class="btn primary" href="/demo">Agendar demonstração</a><a class="btn" href="/app/dashboard">Ver produto</a></div>
+        <div class="panel product-shot"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div><div class="shot-grid"><div class="sidebar"><strong>Inbox compartilhada</strong><p>WhatsApp, CRM e automações por equipe.</p><div id="mini-inbox">${inboxHtml}</div></div><div class="screen"><strong>Dashboard operacional</strong><div id="mini-metrics" class="metric-grid">${metrics}</div></div></div></div>
+      </section>
+      <section><h2>Módulos para operar de ponta a ponta</h2><div class="feature-grid" id="features">${features}</div></section>
+      <section class="compare"><div class="card"><h3>Sem planilhas</h3><p>Pipeline, histórico, tarefas e relatórios centralizados.</p></div><div class="card"><h3>Sem WhatsApp perdido</h3><p>Conexões, inbox, campanhas, filas e atendimento por equipe.</p></div><div class="card"><h3>Com IA interna</h3><p>Resumos, classificação, sugestões, RAG e análise de performance.</p></div></section>
+      <section><h2>FAQ</h2><div class="feature-grid"><div class="card"><h3>É só CRM?</h3><p>Não. CRM é um módulo dentro da ATTO FLOW, junto com ATTOZAP, automações, relatórios, gamificação e ATTO AI.</p></div><div class="card"><h3>Funciona com WhatsApp?</h3><p>A arquitetura prevê Baileys, múltiplos números, filas, QR Code, reconexão e webhooks.</p></div><div class="card"><h3>É multiempresa?</h3><p>Sim. Todo dado sensível usa contexto de empresa e RBAC.</p></div></div></section>`;
+  }
+
+  if (pathname.startsWith('/app')) {
+    const dashboard = app.reports.dashboard(ctx);
+    const stages = app.crm.stages;
+    const leads = filterLeadsForContext(app.crm.listLeads(ctx), ctx);
+    const inbox = app.attozap.inbox(ctx);
+    const health = app.admin.systemHealth();
+    const menu = ['/app/dashboard','/app/inbox','/app/crm/pipeline','/app/campaigns','/app/whatsapp/connections','/app/automations','/app/ai/playground','/app/reports','/app/gamification','/app/team/users','/app/settings/company','/app/admin/system-health']
+      .map((href) => `<a href="${href}">${escapeHtml(href.replace('/app/','').replaceAll('/',' · '))}</a>`)
+      .join('');
+    let content = `<div class="metric-grid">${[['Leads',dashboard.totalLeads],['Conversas',dashboard.activeConversations],['Conversão',`${dashboard.conversionRate}%`],['Saúde',health.status]].map(([k,v]) => `<div class="card"><div class="eyebrow">${escapeHtml(k)}</div><h2>${escapeHtml(v)}</h2></div>`).join('')}</div><div class="card"><h3>Insight</h3><p>${escapeHtml(dashboard.aiInsight)}</p></div>`;
+
+    if (pathname.includes('pipeline') || pathname.includes('crm')) {
+      content = `<div class="kanban">${stages.slice(0, 8).map((stage) => `<div class="card"><h3>${escapeHtml(stage)}</h3>${leads.filter((lead) => lead.stage === stage).map((lead) => `<div class="lead-card"><strong>${escapeHtml(lead.name)}</strong><p>${escapeHtml(lead.origin)} · score ${escapeHtml(lead.score)}</p><button onclick="suggest('${lead.id}')">ATTO AI</button></div>`).join('') || '<p>Sem leads</p>'}</div>`).join('')}</div>`;
+    } else if (pathname.includes('inbox') || pathname.includes('whatsapp')) {
+      content = `<div class="feature-grid">${inbox.map((conversation) => `<div class="card"><h3>${escapeHtml(conversation.leadName)}</h3><p>${escapeHtml(conversation.phone)}</p><p>${escapeHtml(conversation.preview)}</p></div>`).join('')}</div>`;
+    } else if (pathname.includes('ai')) {
+      content = `<pre>${escapeHtml(JSON.stringify(app.attoAi.usageLogs(ctx.companyId), null, 2))}</pre>`;
+    }
+
+    return `<div class="app-layout"><aside class="panel app-menu"><strong>ATTO FLOW</strong>${menu}</aside><section><div class="card"><div class="eyebrow">${escapeHtml(pathname)}</div><h1 style="font-size:54px">${escapeHtml(pathname === '/app' ? 'Dashboard' : pathname.split('/').filter(Boolean).slice(1).join(' · '))}</h1><p>Área operacional enterprise com RBAC, multiempresa, dados reais do MVP e integração ATTO AI.</p></div><div id="app-content" style="margin-top:18px">${content}</div></section></div>`;
+  }
+
+  const label = pathname === '/404' ? 'Página não encontrada' : pathname.replace(/^\//, '').replaceAll('/', ' · ').replaceAll('-', ' ');
+  return `<section class="hero"><div class="eyebrow">ATTO FLOW</div><h1>${escapeHtml(label)}</h1><p class="lead">Página estruturada com SEO, CTA, conteúdo e links internos para a plataforma enterprise.</p><div class="hero-actions"><a class="btn primary" href="/demo">Agendar demo</a><a class="btn" href="/">Voltar</a></div></section>`;
 }
 
 function isKnownPage(pathname) {
@@ -236,13 +305,14 @@ function matchDynamicPage(pattern, pathname) {
   return regex.test(pathname);
 }
 
-function renderPage(html, pathname) {
+function renderPage(html, pathname, ctx = { companyId: app.config.defaultCompanyId, userId: app.config.defaultUserId, role: 'owner' }) {
   const metadata = app.seo.metadata(pathname);
   return html
     .replaceAll('__ATTO_ROUTE__', pathname)
     .replaceAll('__ATTO_TITLE__', metadata.title)
     .replaceAll('__ATTO_DESCRIPTION__', metadata.description)
-    .replaceAll('__ATTO_SCHEMA__', JSON.stringify(metadata.schema));
+    .replaceAll('__ATTO_SCHEMA__', JSON.stringify(metadata.schema))
+    .replaceAll('__ATTO_CONTENT__', renderInitialContent(pathname, ctx));
 }
 
 const server = http.createServer((req, res) => {
