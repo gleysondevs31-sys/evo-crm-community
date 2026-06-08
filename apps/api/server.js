@@ -4,6 +4,8 @@ const { join, extname } = require('node:path');
 const { createAttoFlowApp } = require('./composition');
 const { getRequestContext, filterLeadsForContext } = require('../../packages/auth');
 const { logger } = require('../../packages/logger');
+const { pages } = require('../../packages/config/routes');
+const { schema, sensitiveTables } = require('../../packages/database/schema');
 
 const app = createAttoFlowApp();
 const startedAt = new Date();
@@ -37,8 +39,13 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload, null, 2));
 }
 
-function sendHtml(res, content) {
-  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+function sendHtml(res, content, status = 200) {
+  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+  res.end(content);
+}
+
+function sendText(res, status, content, contentType = 'text/plain') {
+  res.writeHead(status, { 'content-type': `${contentType}; charset=utf-8`, 'cache-control': 'no-store' });
   res.end(content);
 }
 
@@ -56,9 +63,17 @@ async function route(req, res) {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const ctx = context(req);
 
-  if (url.pathname === '/' || url.pathname === '/app') {
+  if (url.pathname === '/sitemap.xml') {
+    return sendText(res, 200, app.seo.sitemap(), 'application/xml');
+  }
+
+  if (url.pathname === '/robots.txt') {
+    return sendText(res, 200, app.seo.robots());
+  }
+
+  if (isKnownPage(url.pathname)) {
     const indexPath = join(process.cwd(), 'apps/web/index.html');
-    return sendHtml(res, readFileSync(indexPath, 'utf8'));
+    return sendHtml(res, renderPage(readFileSync(indexPath, 'utf8'), url.pathname));
   }
 
   if (url.pathname.startsWith('/assets/')) {
@@ -73,6 +88,18 @@ async function route(req, res) {
       startedAt: startedAt.toISOString(),
       uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
     });
+  }
+
+  if (url.pathname === '/api/pages') {
+    return sendJson(res, 200, { pages });
+  }
+
+  if (url.pathname === '/api/seo') {
+    return sendJson(res, 200, app.seo.metadata(url.searchParams.get('path') || '/'));
+  }
+
+  if (url.pathname === '/api/schema') {
+    return sendJson(res, 200, { schema, sensitiveTables });
   }
 
   if (url.pathname === '/api/status') {
@@ -155,6 +182,30 @@ async function route(req, res) {
     return sendJson(res, 200, { ranking: app.gamification.ranking(ctx) });
   }
 
+  if (url.pathname === '/api/admin/companies') {
+    return sendJson(res, 200, { companies: app.admin.companies() });
+  }
+
+  if (url.pathname === '/api/admin/system-health') {
+    return sendJson(res, 200, app.admin.systemHealth());
+  }
+
+  if (url.pathname === '/api/billing/plans') {
+    return sendJson(res, 200, { plans: app.billing.plans() });
+  }
+
+  if (url.pathname === '/api/billing/subscription') {
+    return sendJson(res, 200, app.billing.currentSubscription(app.database.getCompany(ctx.companyId)));
+  }
+
+  if (url.pathname === '/api/integrations') {
+    return sendJson(res, 200, { integrations: app.integrations.list() });
+  }
+
+  if (url.pathname === '/api/omnichannel/channels') {
+    return sendJson(res, 200, { channels: app.omnichannel.channels() });
+  }
+
   if (url.pathname === '/api/atto-ai/logs') {
     return sendJson(res, 200, { logs: app.attoAi.usageLogs(ctx.companyId) });
   }
@@ -167,7 +218,31 @@ async function route(req, res) {
     return sendJson(res, 200, { jobs: app.queue.list() });
   }
 
-  return sendJson(res, 404, { ok: false, error: 'not_found' });
+  if (url.pathname.startsWith('/api/')) {
+    return sendJson(res, 404, { ok: false, error: 'not_found' });
+  }
+
+  const indexPath = join(process.cwd(), 'apps/web/index.html');
+  return sendHtml(res, renderPage(readFileSync(indexPath, 'utf8'), '/404'), 404);
+}
+
+function isKnownPage(pathname) {
+  return pages.some((page) => page.path === pathname || matchDynamicPage(page.path, pathname));
+}
+
+function matchDynamicPage(pattern, pathname) {
+  if (!pattern.includes('[')) return false;
+  const regex = new RegExp(`^${pattern.replace(/\/[[][^/]+[]]/g, '/[^/]+')}$`);
+  return regex.test(pathname);
+}
+
+function renderPage(html, pathname) {
+  const metadata = app.seo.metadata(pathname);
+  return html
+    .replaceAll('__ATTO_ROUTE__', pathname)
+    .replaceAll('__ATTO_TITLE__', metadata.title)
+    .replaceAll('__ATTO_DESCRIPTION__', metadata.description)
+    .replaceAll('__ATTO_SCHEMA__', JSON.stringify(metadata.schema));
 }
 
 const server = http.createServer((req, res) => {

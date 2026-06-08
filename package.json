@@ -9,7 +9,8 @@
     "web": "node apps/web/server.js",
     "worker": "node apps/workers/worker.js",
     "render-preview": "node apps/render-preview/server.js",
-    "check": "node --check apps/api/server.js && node --check apps/web/server.js && node --check apps/workers/worker.js && node --check apps/render-preview/server.js"
+    "check": "node --check apps/api/server.js && node --check apps/web/server.js && node --check apps/workers/worker.js && node --check apps/render-preview/server.js && node --check apps/whatsapp-gateway/gateway.js",
+    "whatsapp-gateway": "node apps/whatsapp-gateway/gateway.js"
   },
   "engines": {
     "node": ">=20"

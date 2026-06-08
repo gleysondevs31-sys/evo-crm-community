@@ -27,6 +27,8 @@ A Render procura `./Dockerfile` por padrão. O Dockerfile raiz sobe o MVP modula
 | `/api/crm/leads` | Leads do CRM. |
 | `/api/attozap/inbox` | Inbox comercial do ATTOZAP. |
 | `/api/atto-ai/logs` | Logs de uso da ATTO AI interna. |
+| `/sitemap.xml` | Sitemap SEO das páginas públicas. |
+| `/robots.txt` | Robots SEO com bloqueio da área interna. |
 
 ## Deploy via Dashboard
 
