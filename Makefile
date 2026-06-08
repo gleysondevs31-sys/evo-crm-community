@@ -23,7 +23,7 @@ LOCAL_SOURCE_READY := $(shell test -f evo-auth-service-community/Dockerfile \
 COMPOSE_FILE ?= $(if $(filter yes,$(LOCAL_SOURCE_READY)),docker-compose.yml,docker-compose.images.yaml)
 COMPOSE := docker compose -f $(COMPOSE_FILE)
 
-.PHONY: help setup start stop restart logs clean build status render-preview \
+.PHONY: help setup start stop restart logs clean build status render-preview vendor-submodules \
         seed seed-auth seed-crm \
         shell-auth shell-crm shell-core shell-processor shell-bot-runtime
 
@@ -103,6 +103,9 @@ status: ## Show status of all services
 
 render-preview: ## Run the lightweight ATTO FLOW Render preview locally
 	PORT=$${PORT:-10000} node apps/render-preview/server.js
+
+vendor-submodules: ## Convert initialized submodules into normal vendored directories
+	./scripts/vendor-submodules.sh
 
 logs: ## Show logs (use SERVICE=name to filter, e.g. make logs SERVICE=evo-crm)
 ifdef SERVICE

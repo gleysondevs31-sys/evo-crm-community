@@ -38,6 +38,7 @@ See:
 - [ATTO AI module](./docs/atto-flow/atto-ai.md)
 - [ATTOZAP module](./docs/attozap/README.md)
 - [Render deploy guide](./docs/atto-flow/render.md)
+- [Vendor submodules permanently](./docs/atto-flow/vendor-submodules.md)
 
 ---
 
@@ -52,6 +53,18 @@ PORT=10000 node apps/render-preview/server.js
 ```
 
 For Render instructions, see [docs/atto-flow/render.md](./docs/atto-flow/render.md).
+
+---
+
+## Vendoring submodules
+
+If the ATTO FLOW codebase should stop downloading submodules on every fresh clone, initialize them once on a machine with repository access and run:
+
+```bash
+make vendor-submodules
+```
+
+This converts initialized submodules into normal versioned directories in the main repository. See [docs/atto-flow/vendor-submodules.md](./docs/atto-flow/vendor-submodules.md).
 
 ---
 
