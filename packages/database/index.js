@@ -307,6 +307,10 @@ function createDatabase() {
         status: input.status || 'pending',
         scheduledAt: input.scheduledAt || now(),
         idempotencyKey: input.idempotencyKey,
+        queueJobId: input.queueJobId || input.idempotencyKey,
+        providerMessageId: input.providerMessageId || null,
+        sentAt: input.sentAt || null,
+        startedAt: input.startedAt || null,
         createdAt: now(),
         updatedAt: now(),
       };

@@ -10,9 +10,26 @@
     "worker": "node apps/workers/worker.js",
     "render-preview": "node apps/render-preview/server.js",
     "check": "node --check apps/api/server.js && node --check apps/web/server.js && node --check apps/workers/worker.js && node --check apps/render-preview/server.js && node --check apps/whatsapp-gateway/gateway.js",
-    "whatsapp-gateway": "node apps/whatsapp-gateway/gateway.js"
+    "whatsapp-gateway": "node apps/whatsapp-gateway/gateway.js",
+    "gateway": "node apps/whatsapp-gateway/gateway.js",
+    "test": "node tests/attozap-disparos.test.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "prisma:seed": "node prisma/seed.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "bullmq": "^5.13.2",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   }
 }

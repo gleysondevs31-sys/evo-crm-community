@@ -7,9 +7,12 @@ ENV NODE_ENV=production
 ENV PORT=10000
 
 COPY package.json ./package.json
+RUN npm install --omit=dev --no-audit --no-fund
+
 COPY apps ./apps
 COPY modules ./modules
 COPY packages ./packages
+COPY prisma ./prisma
 COPY docs ./docs
 
 EXPOSE 10000

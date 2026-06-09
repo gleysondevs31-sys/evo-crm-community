@@ -1,0 +1,226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id          String   @id
+  name        String
+  slug        String   @unique
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users       User[]
+  connections WhatsAppConnection[]
+  lists       ContactList[]
+  contacts    Contact[]
+  templates   MessageTemplate[]
+  campaigns   Campaign[]
+  jobs        MessageJob[]
+  logs        MessageLog[]
+  audits      AuditLog[]
+}
+
+model User {
+  id        String   @id
+  companyId String
+  name      String
+  email     String
+  role      String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id])
+  @@index([companyId])
+}
+
+model WhatsAppConnection {
+  id              String   @id
+  companyId       String
+  name            String
+  phoneNumber     String
+  status          String
+  qrCode          String?
+  connectedAt     DateTime?
+  lastHeartbeatAt DateTime?
+  messagesSent    Int      @default(0)
+  totalFailures   Int      @default(0)
+  dailyLimit      Int      @default(500)
+  hourlyLimit     Int      @default(60)
+  delayMinMs      Int      @default(12000)
+  delayMaxMs      Int      @default(45000)
+  sessionPath     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  company         Company  @relation(fields: [companyId], references: [id])
+  campaigns       Campaign[]
+  jobs            MessageJob[]
+  logs            MessageLog[]
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+model ContactList {
+  id                String   @id
+  companyId         String
+  name              String
+  source            String
+  totalContacts     Int      @default(0)
+  validContacts     Int      @default(0)
+  invalidContacts   Int      @default(0)
+  duplicateContacts Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  company           Company  @relation(fields: [companyId], references: [id])
+  contacts          Contact[]
+  campaigns         Campaign[]
+  @@index([companyId])
+}
+
+model Contact {
+  id              String   @id
+  companyId       String
+  contactListId   String
+  name            String
+  phone           String
+  rawPhone        String
+  tags            String   @default("[]")
+  customFields    String   @default("{}")
+  origin          String
+  status          String
+  validationError String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  company         Company  @relation(fields: [companyId], references: [id])
+  list            ContactList @relation(fields: [contactListId], references: [id])
+  campaignContacts CampaignContact[]
+  jobs            MessageJob[]
+  logs            MessageLog[]
+  @@unique([companyId, contactListId, phone])
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+model MessageTemplate {
+  id        String   @id
+  companyId String
+  name      String
+  body      String
+  mediaUrl  String?
+  variables String   @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id])
+  @@index([companyId])
+}
+
+model Campaign {
+  id             String   @id
+  companyId      String
+  connectionId   String
+  contactListId  String
+  name           String
+  message        String
+  mediaUrl       String?
+  status         String
+  totalContacts  Int      @default(0)
+  totalSent      Int      @default(0)
+  totalDelivered Int      @default(0)
+  totalFailures  Int      @default(0)
+  totalPending   Int      @default(0)
+  scheduledAt    DateTime?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  company        Company  @relation(fields: [companyId], references: [id])
+  connection     WhatsAppConnection @relation(fields: [connectionId], references: [id])
+  contactList    ContactList @relation(fields: [contactListId], references: [id])
+  contacts       CampaignContact[]
+  jobs           MessageJob[]
+  logs           MessageLog[]
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+model CampaignContact {
+  id                String   @id
+  companyId         String
+  campaignId        String
+  contactId         String
+  status            String
+  providerMessageId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  campaign          Campaign @relation(fields: [campaignId], references: [id])
+  contact           Contact  @relation(fields: [contactId], references: [id])
+  @@unique([companyId, campaignId, contactId])
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+model MessageJob {
+  id                String   @id
+  companyId         String
+  campaignId        String
+  contactId         String
+  connectionId      String
+  message           String
+  mediaUrl          String?
+  attempt           Int      @default(0)
+  maxAttempts       Int      @default(3)
+  status            String
+  scheduledAt       DateTime
+  idempotencyKey    String
+  queueJobId        String
+  providerMessageId String?
+  startedAt         DateTime?
+  sentAt            DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  company           Company  @relation(fields: [companyId], references: [id])
+  campaign          Campaign @relation(fields: [campaignId], references: [id])
+  contact           Contact  @relation(fields: [contactId], references: [id])
+  connection        WhatsAppConnection @relation(fields: [connectionId], references: [id])
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+model MessageLog {
+  id           String   @id
+  companyId    String
+  type         String
+  campaignId   String?
+  connectionId String?
+  messageJobId String?
+  contactId    String?
+  message      String?
+  status       String
+  error        String?
+  createdAt    DateTime @default(now())
+  company      Company @relation(fields: [companyId], references: [id])
+  campaign     Campaign? @relation(fields: [campaignId], references: [id])
+  connection   WhatsAppConnection? @relation(fields: [connectionId], references: [id])
+  contact      Contact? @relation(fields: [contactId], references: [id])
+  @@index([companyId])
+  @@index([companyId, campaignId])
+  @@index([companyId, type])
+}
+
+model AuditLog {
+  id         String   @id
+  companyId  String
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  payload    String
+  createdAt  DateTime @default(now())
+  company    Company  @relation(fields: [companyId], references: [id])
+  @@index([companyId])
+}

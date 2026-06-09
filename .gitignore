@@ -14,3 +14,6 @@ evolution-hub
 evo-ai-docs/
 evo-flow/
 evo-crm-enterprise/
+
+# ATTOZAP runtime artifacts
+storage/

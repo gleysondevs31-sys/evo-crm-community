@@ -49,14 +49,23 @@ function sendText(res, status, content, contentType = 'text/plain') {
   res.end(content);
 }
 
-function sendEventStream(res, payload) {
+function sendEventStream(req, res, app, ctx, payload) {
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-store',
     connection: 'keep-alive',
   });
-  res.write(`event: snapshot\ndata: ${JSON.stringify(payload)}\n\n`);
-  res.end();
+  const writeEvent = (event) => {
+    res.write(`event: ${event.type || 'snapshot'}\n`);
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  writeEvent({ type: 'snapshot', companyId: ctx.companyId, payload, timestamp: new Date().toISOString() });
+  const unsubscribe = app.eventBus.subscribe(ctx.companyId, writeEvent);
+  const keepAlive = setInterval(() => writeEvent({ type: 'heartbeat', companyId: ctx.companyId, payload: { ok: true }, timestamp: new Date().toISOString() }), 15000);
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    unsubscribe();
+  });
 }
 
 function sendStatic(res, filePath) {
@@ -126,11 +135,27 @@ async function route(req, res) {
   }
 
   if (url.pathname === '/api/disparos/events') {
-    return sendEventStream(res, {
+    return sendEventStream(req, res, app, ctx, {
       campaigns: app.attozap.listCampaigns(ctx),
       connections: app.attozap.listConnections(ctx),
-      queue: app.queue.list({ type: 'attozap.message.send' }),
+      queue: app.queue.list({ type: app.config.queueMessageSend }),
       logs: app.attozap.listLogs(ctx).slice(-25),
+    });
+  }
+
+  if (url.pathname === '/api/disparos/health') {
+    const metrics = await app.queue.metrics();
+    const connections = app.attozap.listConnections(ctx);
+    const campaigns = app.attozap.listCampaigns(ctx);
+    return sendJson(res, 200, {
+      redis: metrics.redis,
+      queue: metrics,
+      workersActive: metrics.workers,
+      connectedConnections: connections.filter((connection) => connection.status === 'connected').length,
+      runningCampaigns: campaigns.filter((campaign) => campaign.status === 'running').length,
+      pendingJobs: metrics.queued,
+      failedJobs: metrics.failed,
+      recovered: app.recovery,
     });
   }
 

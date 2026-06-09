@@ -1,6 +1,8 @@
 const { config } = require('../../packages/config');
 const { createDatabase } = require('../../packages/database');
 const { createQueue } = require('../../packages/queue');
+const { createDisparosEventBus } = require('../../modules/attozap/event-bus');
+const { recoverAttozapDisparos } = require('../../modules/attozap/recovery');
 const { createAttoAiRuntime } = require('../../modules/atto-ai/runtime');
 const { createCrmModule } = require('../../modules/crm');
 const { createAttoZapModule } = require('../../modules/attozap');
@@ -15,10 +17,11 @@ const { createOmnichannelModule } = require('../../modules/omnichannel');
 
 function createAttoFlowApp() {
   const database = createDatabase();
-  const queue = createQueue();
+  const queue = createQueue(config);
+  const eventBus = createDisparosEventBus();
   const attoAi = createAttoAiRuntime();
   const crm = createCrmModule({ database, attoAi });
-  const attozap = createAttoZapModule({ database, attoAi, queue });
+  const attozap = createAttoZapModule({ database, attoAi, queue, eventBus, config });
   const automation = createAutomationModule({ database, queue, attoAi });
   const reports = createReportsModule({ database, attoAi });
   const gamification = createGamificationModule({ database });
@@ -29,10 +32,12 @@ function createAttoFlowApp() {
   const omnichannel = createOmnichannelModule();
 
   queue.process('campaign.dispatch', async ({ companyId, campaignId }) => ({ delivered: true, companyId, campaignId }));
-  queue.process('attozap.message.send', async ({ companyId, messageJobId }) => attozap.processMessageJob({ companyId, userId: config.defaultUserId, role: 'owner', can: () => true }, messageJobId));
+  queue.process(config.queueMessageSend, async ({ companyId, messageJobId }) => attozap.processMessageJob({ companyId, userId: config.defaultUserId, role: 'owner', can: () => true }, messageJobId));
   queue.process('automation.followup', async ({ companyId, leadId, taskId }) => ({ created: true, companyId, leadId, taskId }));
 
-  return { config, database, queue, attoAi, crm, attozap, automation, reports, gamification, seo, admin, billing, integrations, omnichannel };
+  const recovery = recoverAttozapDisparos({ database, queue, eventBus, context: { companyId: config.defaultCompanyId, userId: config.defaultUserId, role: 'owner', can: () => true } });
+
+  return { config, database, queue, eventBus, recovery, attoAi, crm, attozap, automation, reports, gamification, seo, admin, billing, integrations, omnichannel };
 }
 
 module.exports = { createAttoFlowApp };

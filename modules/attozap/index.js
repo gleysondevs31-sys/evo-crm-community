@@ -81,9 +81,15 @@ function summarizeCampaign(database, companyId, campaignId) {
   return database.updateCampaign(companyId, campaignId, stats);
 }
 
-function createAttoZapModule({ database, queue }) {
+function createAttoZapModule({ database, queue, eventBus, config = {} }) {
+  function emit(context, type, payload = {}) {
+    return eventBus?.publish({ type, companyId: context.companyId, connectionId: payload.connectionId, campaignId: payload.campaignId, payload });
+  }
+
   function log(context, input) {
-    return database.createMessageLog({ companyId: context.companyId, ...input });
+    const entry = database.createMessageLog({ companyId: context.companyId, ...input });
+    emit(context, input.type, { ...input, logId: entry.id });
+    return entry;
   }
 
   function ensureCompanyCanSend(context) {
@@ -121,6 +127,7 @@ function createAttoZapModule({ database, queue }) {
       });
       const delayMs = randomDelay(connection.delayMinMs, connection.delayMaxMs);
       offset += delayMs;
+      const queueJobId = `send:${context.companyId}:${campaign.id}:${contact.id}`;
       const messageJob = database.createMessageJob({
         companyId: context.companyId,
         campaignId: campaign.id,
@@ -129,10 +136,22 @@ function createAttoZapModule({ database, queue }) {
         message: rendered,
         mediaUrl: campaign.mediaUrl,
         scheduledAt: new Date(Date.now() + offset).toISOString(),
-        idempotencyKey: `${campaign.id}:${contact.id}`,
+        idempotencyKey: queueJobId,
+        queueJobId,
       });
+      if (messageJob.status === 'sent') continue;
       database.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'queued' });
-      jobs.push(queue.add('attozap.message.send', { companyId: context.companyId, messageJobId: messageJob.id, campaignId: campaign.id }, { jobId: messageJob.id, delayMs: offset, maxAttempts: messageJob.maxAttempts }));
+      jobs.push(queue.add(config.queueMessageSend || 'attozap.message.send', {
+        companyId: context.companyId,
+        campaignId: campaign.id,
+        contactId: contact.id,
+        connectionId: connection.id,
+        messageJobId: messageJob.id,
+        renderedMessage: rendered,
+        mediaUrl: campaign.mediaUrl,
+        attempt: messageJob.attempt,
+        scheduledAt: messageJob.scheduledAt,
+      }, { jobId: queueJobId, delayMs: offset, scheduledAt: messageJob.scheduledAt, maxAttempts: messageJob.maxAttempts }));
     }
     summarizeCampaign(database, context.companyId, campaign.id);
     return jobs;
@@ -179,6 +198,7 @@ function createAttoZapModule({ database, queue }) {
         delayMaxMs: input.delayMaxMs,
       });
       log(context, { type: 'connection.qr_generated', connectionId: connection.id, status: connection.status, message: connection.qrCode, error: normalized.error });
+      emit(context, 'qr.generated', { connectionId: connection.id, qrCode: connection.qrCode });
       return connection;
     },
     updateConnectionStatus(context, connectionId, status) {
@@ -189,6 +209,7 @@ function createAttoZapModule({ database, queue }) {
       const connection = database.updateWhatsappConnection(context.companyId, connectionId, patch);
       if (!connection) throw new Error('Conexão não encontrada.');
       log(context, { type: `connection.${status}`, connectionId, status: 'info', message: `Conexão ${status}` });
+      emit(context, 'connection.status_changed', { connectionId, status });
       return connection;
     },
 
@@ -296,6 +317,7 @@ function createAttoZapModule({ database, queue }) {
       const updated = database.getCampaign(context.companyId, campaignId);
       const jobs = enqueueCampaignMessages(context, updated);
       log(context, { type: 'campaign.started', campaignId, connectionId: campaign.connectionId, status: 'running', message: `${jobs.length} mensagens enfileiradas.` });
+      emit(context, 'campaign.progress', { campaignId, queued: jobs.length });
       return this.getCampaign(context, campaignId);
     },
     pauseCampaign(context, campaignId) {
@@ -351,15 +373,20 @@ function createAttoZapModule({ database, queue }) {
       if (!campaign || campaign.status !== 'running') throw new Error('Campanha não está ativa.');
       if (!contact || contact.status !== 'valid') throw new Error('Contato inválido.');
       const connection = ensureConnectionReady(context, job.connectionId);
+      database.updateMessageJob(context.companyId, messageJobId, { status: 'sending', attempt: job.attempt + 1, startedAt: new Date().toISOString() });
+      database.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sending' });
+      log(context, { type: 'job.started', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'sending' });
 
-      database.updateMessageJob(context.companyId, messageJobId, { status: 'sent', attempt: job.attempt + 1, sentAt: new Date().toISOString() });
-      database.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sent' });
+      const providerMessageId = `local:${connection.id}:${messageJobId}:${Date.now()}`;
+      database.updateMessageJob(context.companyId, messageJobId, { status: 'sent', providerMessageId, sentAt: new Date().toISOString() });
+      database.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sent', providerMessageId });
       database.updateWhatsappConnection(context.companyId, connection.id, { messagesSent: connection.messagesSent + 1, sentToday: connection.sentToday + 1, sentThisHour: connection.sentThisHour + 1, lastHeartbeatAt: new Date().toISOString() });
       log(context, { type: 'message.sent', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, message: job.message, status: 'sent' });
       const updated = summarizeCampaign(database, context.companyId, campaign.id);
       if (updated.totalPending === 0 && updated.totalFailures === 0) {
         database.updateCampaign(context.companyId, campaign.id, { status: 'completed', finishedAt: new Date().toISOString() });
         log(context, { type: 'campaign.completed', campaignId: campaign.id, connectionId: connection.id, status: 'completed' });
+        emit(context, 'campaign.completed', { campaignId: campaign.id });
       }
       return database.getMessageJob(context.companyId, messageJobId);
     },

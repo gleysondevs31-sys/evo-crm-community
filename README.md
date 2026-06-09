@@ -47,13 +47,15 @@ See:
 
 The active implementation focus is now **ATTOZAP DISPAROS**: WhatsApp campaign sending with isolated connections, contact lists, message templates, campaign lifecycle controls, queue jobs, logs, limits and SSE snapshots.
 
+This stage adds production adapters for Redis/BullMQ, a Baileys-ready WhatsApp gateway, isolated session storage, Prisma schema/migrations, idempotent job IDs, recovery on bootstrap and `/api/disparos/health`.
+
 For this cycle, advanced CRM, billing, gamification, complex reporting, advanced AI and visual automation builders are intentionally secondary so the dispatch system can become robust and production-oriented first.
 
 ---
 
 ## Render preview
 
-This repository includes a root `Dockerfile` and `render.yaml` so Render can build the ATTO FLOW modular MVP without looking for Dockerfiles inside missing submodules. The API serves the initial web UI at `/` and exposes `/healthz`, `/api/status`, `/api/disparos/overview`, `/api/disparos/conexoes`, `/api/disparos/listas`, `/api/disparos/templates`, `/api/disparos/campanhas` and `/api/disparos/events`.
+This repository includes a root `Dockerfile` and `render.yaml` so Render can build the ATTO FLOW modular MVP without looking for Dockerfiles inside missing submodules. The API serves the initial web UI at `/` and exposes `/healthz`, `/api/status`, `/api/disparos/overview`, `/api/disparos/conexoes`, `/api/disparos/listas`, `/api/disparos/templates`, `/api/disparos/campanhas`, `/api/disparos/events` and `/api/disparos/health`.
 
 For local verification:
 

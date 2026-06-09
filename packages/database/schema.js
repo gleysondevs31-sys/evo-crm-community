@@ -11,7 +11,7 @@ const schema = {
   message_templates: ['id', 'company_id', 'name', 'body', 'media_url', 'variables', 'created_at', 'updated_at'],
   campaigns: ['id', 'company_id', 'connection_id', 'contact_list_id', 'name', 'message', 'media_url', 'status', 'total_contacts', 'total_sent', 'total_delivered', 'total_failures', 'total_pending', 'scheduled_at', 'started_at', 'finished_at', 'created_at', 'updated_at'],
   campaign_contacts: ['id', 'company_id', 'campaign_id', 'contact_id', 'status', 'created_at', 'updated_at'],
-  message_jobs: ['id', 'company_id', 'campaign_id', 'contact_id', 'connection_id', 'message', 'media_url', 'attempt', 'max_attempts', 'status', 'scheduled_at', 'idempotency_key', 'created_at', 'updated_at'],
+  message_jobs: ['id', 'company_id', 'campaign_id', 'contact_id', 'connection_id', 'message', 'media_url', 'attempt', 'max_attempts', 'status', 'scheduled_at', 'idempotency_key', 'queue_job_id', 'provider_message_id', 'sent_at', 'created_at', 'updated_at'],
   message_logs: ['id', 'company_id', 'type', 'campaign_id', 'connection_id', 'message_job_id', 'contact_id', 'message', 'status', 'error', 'created_at'],
   audit_logs: ['id', 'company_id', 'actor_id', 'action', 'entity_type', 'entity_id', 'payload', 'created_at'],
 
