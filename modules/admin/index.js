@@ -1,24 +1,24 @@
 function createAdminModule({ database, queue }) {
   return {
-    companies() {
+    async companies() {
       return database.listCompanies();
     },
-    systemHealth() {
+    async systemHealth(context = {}) {
+      const companyId = context.companyId || process.env.ATTO_DEFAULT_COMPANY_ID || 'company_atto_demo';
+      const stats = typeof database.stats === 'function'
+        ? await database.stats(companyId)
+        : { companies: database.db.companies.length, users: database.db.users.length, connections: database.db.whatsappConnections.length, campaigns: database.db.campaigns.length, jobs: database.db.messageJobs.length };
+      const jobs = await queue.list();
       return {
         status: 'operational',
-        companies: database.db.companies.length,
-        users: database.db.users.length,
-        leads: database.db.leads.length,
-        queuedJobs: queue.list().filter((job) => job.status === 'queued').length,
-        queueDepth: queue.list().filter((job) => ['queued', 'paused', 'running'].includes(job.status)).length,
-        completedJobs: queue.list().filter((job) => job.status === 'completed').length,
+        ...stats,
+        queuedJobs: jobs.filter((job) => job.status === 'queued').length,
+        queueDepth: jobs.filter((job) => ['queued', 'paused', 'running'].includes(job.status)).length,
+        completedJobs: jobs.filter((job) => job.status === 'completed').length,
       };
     },
-    audit(context, action, payload) {
-      const entry = { id: database.createId('audit'), companyId: context.companyId, actorId: context.userId, action, payload, createdAt: database.now() };
-      database.db.auditLogs ||= [];
-      database.db.auditLogs.push(entry);
-      return entry;
+    async audit(context, action, payload) {
+      return database.createAuditLog({ companyId: context.companyId, actorId: context.userId, action, payload });
     },
   };
 }

@@ -92,7 +92,7 @@ async function route(req, res) {
 
   if (isKnownPage(url.pathname)) {
     const indexPath = join(process.cwd(), 'apps/web/index.html');
-    return sendHtml(res, renderPage(readFileSync(indexPath, 'utf8'), url.pathname, ctx));
+    return sendHtml(res, await renderPage(readFileSync(indexPath, 'utf8'), url.pathname, ctx));
   }
 
   if (url.pathname.startsWith('/assets/')) {
@@ -125,28 +125,28 @@ async function route(req, res) {
     return sendJson(res, 200, {
       name: app.config.appName,
       mode: 'attozap-disparos-mvp',
-      company: app.database.getCompany(ctx.companyId),
+      company: await app.database.getCompany(ctx.companyId),
       modules: ['attozap-disparos'],
     });
   }
 
   if (url.pathname === '/api/dashboard') {
-    return sendJson(res, 200, app.reports.dashboard(ctx));
+    return sendJson(res, 200, await app.reports.dashboard(ctx));
   }
 
   if (url.pathname === '/api/disparos/events') {
     return sendEventStream(req, res, app, ctx, {
-      campaigns: app.attozap.listCampaigns(ctx),
-      connections: app.attozap.listConnections(ctx),
-      queue: app.queue.list({ type: app.config.queueMessageSend }),
-      logs: app.attozap.listLogs(ctx).slice(-25),
+      campaigns: await app.attozap.listCampaigns(ctx),
+      connections: await app.attozap.listConnections(ctx),
+      queue: await app.queue.list({ type: app.config.queueMessageSend }),
+      logs: (await app.attozap.listLogs(ctx)).slice(-25),
     });
   }
 
   if (url.pathname === '/api/disparos/health') {
     const metrics = await app.queue.metrics();
-    const connections = app.attozap.listConnections(ctx);
-    const campaigns = app.attozap.listCampaigns(ctx);
+    const connections = await app.attozap.listConnections(ctx);
+    const campaigns = await app.attozap.listCampaigns(ctx);
     return sendJson(res, 200, {
       redis: metrics.redis,
       queue: metrics,
@@ -155,14 +155,14 @@ async function route(req, res) {
       runningCampaigns: campaigns.filter((campaign) => campaign.status === 'running').length,
       pendingJobs: metrics.queued,
       failedJobs: metrics.failed,
-      recovered: app.recovery,
+      recovered: await app.recovery,
     });
   }
 
   if (url.pathname === '/api/disparos/overview') {
-    const campaigns = app.attozap.listCampaigns(ctx);
-    const connections = app.attozap.listConnections(ctx);
-    const logs = app.attozap.listLogs(ctx);
+    const campaigns = await app.attozap.listCampaigns(ctx);
+    const connections = await app.attozap.listConnections(ctx);
+    const logs = await app.attozap.listLogs(ctx);
     return sendJson(res, 200, {
       campaigns: campaigns.length,
       running: campaigns.filter((campaign) => campaign.status === 'running').length,
@@ -177,61 +177,61 @@ async function route(req, res) {
   if (url.pathname === '/api/disparos/conexoes') {
     if (req.method === 'POST') {
       const body = await readBody(req);
-      return sendJson(res, 201, { connection: app.attozap.createConnection(ctx, body) });
+      return sendJson(res, 201, { connection: await app.attozap.createConnection(ctx, body) });
     }
-    return sendJson(res, 200, { connections: app.attozap.listConnections(ctx) });
+    return sendJson(res, 200, { connections: await app.attozap.listConnections(ctx) });
   }
 
   const connectionStatusMatch = url.pathname.match(/^\/api\/disparos\/conexoes\/([^/]+)\/status$/);
   if (connectionStatusMatch && req.method === 'POST') {
     const body = await readBody(req);
-    return sendJson(res, 200, { connection: app.attozap.updateConnectionStatus(ctx, connectionStatusMatch[1], body.status) });
+    return sendJson(res, 200, { connection: await app.attozap.updateConnectionStatus(ctx, connectionStatusMatch[1], body.status) });
   }
 
   if (url.pathname === '/api/disparos/listas') {
     if (req.method === 'POST') {
       const body = await readBody(req);
-      return sendJson(res, 201, { list: app.attozap.createContactList(ctx, body) });
+      return sendJson(res, 201, { list: await app.attozap.createContactList(ctx, body) });
     }
-    return sendJson(res, 200, { lists: app.attozap.listContactLists(ctx) });
+    return sendJson(res, 200, { lists: await app.attozap.listContactLists(ctx) });
   }
 
   const listContactsMatch = url.pathname.match(/^\/api\/disparos\/listas\/([^/]+)\/contatos$/);
   if (listContactsMatch) {
-    return sendJson(res, 200, { contacts: app.attozap.listContacts(ctx, listContactsMatch[1]) });
+    return sendJson(res, 200, { contacts: await app.attozap.listContacts(ctx, listContactsMatch[1]) });
   }
 
   if (url.pathname === '/api/disparos/templates') {
     if (req.method === 'POST') {
       const body = await readBody(req);
-      return sendJson(res, 201, { template: app.attozap.createTemplate(ctx, body) });
+      return sendJson(res, 201, { template: await app.attozap.createTemplate(ctx, body) });
     }
-    return sendJson(res, 200, { templates: app.attozap.listTemplates(ctx) });
+    return sendJson(res, 200, { templates: await app.attozap.listTemplates(ctx) });
   }
 
   if (url.pathname === '/api/disparos/preview') {
     const body = req.method === 'POST' ? await readBody(req) : { message: url.searchParams.get('message') || '' };
-    return sendJson(res, 200, app.attozap.previewMessage(ctx, body));
+    return sendJson(res, 200, await app.attozap.previewMessage(ctx, body));
   }
 
   if (url.pathname === '/api/disparos/campanhas') {
     if (req.method === 'POST') {
       const body = await readBody(req);
-      return sendJson(res, 201, { campaign: app.attozap.createCampaign(ctx, body) });
+      return sendJson(res, 201, { campaign: await app.attozap.createCampaign(ctx, body) });
     }
-    return sendJson(res, 200, { campaigns: app.attozap.listCampaigns(ctx) });
+    return sendJson(res, 200, { campaigns: await app.attozap.listCampaigns(ctx) });
   }
 
   const campaignMatch = url.pathname.match(/^\/api\/disparos\/campanhas\/([^/]+)$/);
   if (campaignMatch) {
     if (req.method === 'PATCH') {
       const body = await readBody(req);
-      return sendJson(res, 200, { campaign: app.attozap.updateCampaign(ctx, campaignMatch[1], body) });
+      return sendJson(res, 200, { campaign: await app.attozap.updateCampaign(ctx, campaignMatch[1], body) });
     }
     if (req.method === 'DELETE') {
-      return sendJson(res, 200, { deleted: app.attozap.deleteCampaign(ctx, campaignMatch[1]) });
+      return sendJson(res, 200, { deleted: await app.attozap.deleteCampaign(ctx, campaignMatch[1]) });
     }
-    return sendJson(res, 200, { campaign: app.attozap.getCampaign(ctx, campaignMatch[1]) });
+    return sendJson(res, 200, { campaign: await app.attozap.getCampaign(ctx, campaignMatch[1]) });
   }
 
   const campaignActionMatch = url.pathname.match(/^\/api\/disparos\/campanhas\/([^/]+)\/(start|pause|resume|cancel|duplicate)$/);
@@ -244,12 +244,12 @@ async function route(req, res) {
       cancel: () => app.attozap.cancelCampaign(ctx, campaignId),
       duplicate: () => app.attozap.duplicateCampaign(ctx, campaignId),
     };
-    return sendJson(res, 200, { campaign: handlers[action]() });
+    return sendJson(res, 200, { campaign: await handlers[action]() });
   }
 
   const campaignLogsMatch = url.pathname.match(/^\/api\/disparos\/campanhas\/([^/]+)\/logs$/);
   if (campaignLogsMatch) {
-    return sendJson(res, 200, { logs: app.attozap.listLogs(ctx, { campaignId: campaignLogsMatch[1] }) });
+    return sendJson(res, 200, { logs: await app.attozap.listLogs(ctx, { campaignId: campaignLogsMatch[1] }) });
   }
 
   if (url.pathname === '/api/crm/stages') {
@@ -284,26 +284,26 @@ async function route(req, res) {
   if (url.pathname === '/api/attozap/connections') {
     if (req.method === 'POST') {
       const body = await readBody(req);
-      return sendJson(res, 201, { connection: app.attozap.createConnection(ctx, body) });
+      return sendJson(res, 201, { connection: await app.attozap.createConnection(ctx, body) });
     }
-    return sendJson(res, 200, { connections: app.attozap.listConnections(ctx) });
+    return sendJson(res, 200, { connections: await app.attozap.listConnections(ctx) });
   }
 
   if (url.pathname === '/api/attozap/inbox') {
-    return sendJson(res, 200, { conversations: app.attozap.inbox(ctx) });
+    return sendJson(res, 200, { conversations: await app.attozap.inbox(ctx) });
   }
 
   const suggestReplyMatch = url.pathname.match(/^\/api\/attozap\/leads\/([^/]+)\/suggest-reply$/);
   if (suggestReplyMatch) {
-    return sendJson(res, 200, { suggestion: app.attozap.suggestReply(ctx, suggestReplyMatch[1]) });
+    return sendJson(res, 200, { suggestion: await app.attozap.suggestReply(ctx, suggestReplyMatch[1]) });
   }
 
   if (url.pathname === '/api/attozap/campaigns') {
     if (req.method === 'POST') {
       const body = await readBody(req);
-      return sendJson(res, 201, { campaign: app.attozap.createCampaign(ctx, body) });
+      return sendJson(res, 201, { campaign: await app.attozap.createCampaign(ctx, body) });
     }
-    return sendJson(res, 200, { campaigns: app.database.listCampaigns(ctx.companyId) });
+    return sendJson(res, 200, { campaigns: await app.database.listCampaigns(ctx.companyId) });
   }
 
   const automationLeadMatch = url.pathname.match(/^\/api\/automation\/leads\/([^/]+)\/entered$/);
@@ -320,11 +320,11 @@ async function route(req, res) {
   }
 
   if (url.pathname === '/api/admin/companies') {
-    return sendJson(res, 200, { companies: app.admin.companies() });
+    return sendJson(res, 200, { companies: await app.admin.companies() });
   }
 
   if (url.pathname === '/api/admin/system-health') {
-    return sendJson(res, 200, app.admin.systemHealth());
+    return sendJson(res, 200, await app.admin.systemHealth(ctx));
   }
 
   if (url.pathname === '/api/billing/plans') {
@@ -332,7 +332,7 @@ async function route(req, res) {
   }
 
   if (url.pathname === '/api/billing/subscription') {
-    return sendJson(res, 200, app.billing.currentSubscription(app.database.getCompany(ctx.companyId)));
+    return sendJson(res, 200, app.billing.currentSubscription(await app.database.getCompany(ctx.companyId)));
   }
 
   if (url.pathname === '/api/integrations') {
@@ -352,7 +352,7 @@ async function route(req, res) {
       const drained = await app.queue.drain();
       return sendJson(res, 200, { jobs: drained });
     }
-    return sendJson(res, 200, { jobs: app.queue.list() });
+    return sendJson(res, 200, { jobs: await app.queue.list() });
   }
 
   if (url.pathname.startsWith('/api/')) {
@@ -360,7 +360,7 @@ async function route(req, res) {
   }
 
   const indexPath = join(process.cwd(), 'apps/web/index.html');
-  return sendHtml(res, renderPage(readFileSync(indexPath, 'utf8'), '/404', ctx), 404);
+  return sendHtml(res, await renderPage(readFileSync(indexPath, 'utf8'), '/404', ctx), 404);
 }
 
 
@@ -373,10 +373,10 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-function renderInitialContent(pathname, ctx) {
+async function renderInitialContent(pathname, ctx) {
   if (pathname === '/') {
-    const dashboard = app.reports.dashboard(ctx);
-    const inbox = app.attozap.inbox(ctx);
+    const dashboard = await app.reports.dashboard(ctx);
+    const inbox = await app.attozap.inbox(ctx);
     const plans = app.billing.plans();
     const metrics = [
       ['Leads', dashboard.totalLeads],
@@ -407,27 +407,27 @@ function renderInitialContent(pathname, ctx) {
   }
 
   if (pathname.startsWith('/app')) {
-    const dashboard = app.reports.dashboard(ctx);
+    const dashboard = await app.reports.dashboard(ctx);
     const stages = app.crm.stages;
     const leads = filterLeadsForContext(app.crm.listLeads(ctx), ctx);
-    const inbox = app.attozap.inbox(ctx);
-    const health = app.admin.systemHealth();
+    const inbox = await app.attozap.inbox(ctx);
+    const health = await app.admin.systemHealth(ctx);
     const menu = ['/app/disparos','/app/disparos/nova','/app/conexoes','/app/conexoes/nova','/app/listas','/app/listas/nova','/app/templates','/app/dashboard','/app/admin/system-health']
       .map((href) => `<a href="${href}">${escapeHtml(href.replace('/app/','').replaceAll('/',' · '))}</a>`)
       .join('');
     let content = `<div class="metric-grid">${[['Leads',dashboard.totalLeads],['Conversas',dashboard.activeConversations],['Conversão',`${dashboard.conversionRate}%`],['Saúde',health.status]].map(([k,v]) => `<div class="card"><div class="eyebrow">${escapeHtml(k)}</div><h2>${escapeHtml(v)}</h2></div>`).join('')}</div><div class="card"><h3>Insight</h3><p>${escapeHtml(dashboard.aiInsight)}</p></div>`;
 
     if (pathname.includes('disparos')) {
-      const campaigns = app.attozap.listCampaigns(ctx);
+      const campaigns = await app.attozap.listCampaigns(ctx);
       content = `<div class="metric-grid">${[['Campanhas',campaigns.length],['Rodando',campaigns.filter((campaign) => campaign.status === 'running').length],['Enviadas',campaigns.reduce((sum, campaign) => sum + campaign.totalSent, 0)],['Falhas',campaigns.reduce((sum, campaign) => sum + campaign.totalFailures, 0)]].map(([k,v]) => `<div class="card"><div class="eyebrow">${escapeHtml(k)}</div><h2>${escapeHtml(v)}</h2></div>`).join('')}</div><div class="feature-grid">${campaigns.map((campaign) => `<div class="card"><div class="eyebrow">${escapeHtml(campaign.status)}</div><h3>${escapeHtml(campaign.name)}</h3><p>${escapeHtml(campaign.totalSent)} enviados · ${escapeHtml(campaign.totalFailures)} falhas · ${escapeHtml(campaign.totalPending)} pendentes</p><div class="hero-actions"><button onclick="campaignAction('${campaign.id}','start')">Iniciar</button><button onclick="campaignAction('${campaign.id}','pause')">Pausar</button><button onclick="campaignAction('${campaign.id}','resume')">Retomar</button><button onclick="campaignAction('${campaign.id}','cancel')">Cancelar</button></div><a href="/app/disparos/${campaign.id}/logs">Ver logs</a></div>`).join('')}</div>`;
     } else if (pathname.includes('conexoes')) {
-      const connections = app.attozap.listConnections(ctx);
+      const connections = await app.attozap.listConnections(ctx);
       content = `<div class="feature-grid">${connections.map((connection) => `<div class="card"><div class="eyebrow">${escapeHtml(connection.status)}</div><h3>${escapeHtml(connection.name)}</h3><p>${escapeHtml(connection.phoneNumber)} · ${escapeHtml(connection.messagesSent)} enviadas · ${escapeHtml(connection.totalFailures)} falhas</p><p>Limites: ${escapeHtml(connection.hourlyLimit)}/hora · ${escapeHtml(connection.dailyLimit)}/dia</p><code>${escapeHtml(connection.qrCode || 'conectado')}</code></div>`).join('')}</div>`;
     } else if (pathname.includes('listas')) {
-      const lists = app.attozap.listContactLists(ctx);
+      const lists = await app.attozap.listContactLists(ctx);
       content = `<div class="feature-grid">${lists.map((list) => `<div class="card"><h3>${escapeHtml(list.name)}</h3><p>${escapeHtml(list.validContacts)} válidos · ${escapeHtml(list.invalidContacts)} inválidos · ${escapeHtml(list.duplicateContacts)} duplicados</p><p>${escapeHtml(list.source)}</p></div>`).join('')}</div>`;
     } else if (pathname.includes('templates')) {
-      const templates = app.attozap.listTemplates(ctx);
+      const templates = await app.attozap.listTemplates(ctx);
       content = `<div class="feature-grid">${templates.map((template) => `<div class="card"><h3>${escapeHtml(template.name)}</h3><p>${escapeHtml(template.body)}</p><div class="eyebrow">${escapeHtml(template.variables.join(', '))}</div></div>`).join('')}</div>`;
     } else if (pathname.includes('pipeline') || pathname.includes('crm')) {
       content = `<div class="kanban">${stages.slice(0, 8).map((stage) => `<div class="card"><h3>${escapeHtml(stage)}</h3>${leads.filter((lead) => lead.stage === stage).map((lead) => `<div class="lead-card"><strong>${escapeHtml(lead.name)}</strong><p>${escapeHtml(lead.origin)} · score ${escapeHtml(lead.score)}</p><button onclick="suggest('${lead.id}')">ATTO AI</button></div>`).join('') || '<p>Sem leads</p>'}</div>`).join('')}</div>`;
@@ -454,14 +454,14 @@ function matchDynamicPage(pattern, pathname) {
   return regex.test(pathname);
 }
 
-function renderPage(html, pathname, ctx = { companyId: app.config.defaultCompanyId, userId: app.config.defaultUserId, role: 'owner' }) {
+async function renderPage(html, pathname, ctx = { companyId: app.config.defaultCompanyId, userId: app.config.defaultUserId, role: 'owner' }) {
   const metadata = app.seo.metadata(pathname);
   return html
     .replaceAll('__ATTO_ROUTE__', pathname)
     .replaceAll('__ATTO_TITLE__', metadata.title)
     .replaceAll('__ATTO_DESCRIPTION__', metadata.description)
     .replaceAll('__ATTO_SCHEMA__', JSON.stringify(metadata.schema))
-    .replaceAll('__ATTO_CONTENT__', renderInitialContent(pathname, ctx));
+    .replaceAll('__ATTO_CONTENT__', await renderInitialContent(pathname, ctx));
 }
 
 const server = http.createServer((req, res) => {

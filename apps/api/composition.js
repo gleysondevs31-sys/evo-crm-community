@@ -16,7 +16,7 @@ const { createIntegrationsModule } = require('../../modules/integrations');
 const { createOmnichannelModule } = require('../../modules/omnichannel');
 
 function createAttoFlowApp() {
-  const database = createDatabase();
+  const database = createDatabase(config);
   const queue = createQueue(config);
   const eventBus = createDisparosEventBus();
   const attoAi = createAttoAiRuntime();

@@ -1,6 +1,6 @@
 function createReportsModule({ database, attoAi }) {
-  function metrics(companyId) {
-    const leads = database.listLeads(companyId);
+  async function metrics(companyId) {
+    const leads = await database.listLeads(companyId);
     const totalLeads = leads.length;
     const wonLeads = leads.filter((lead) => lead.stage === 'Venda').length;
     const activeConversations = leads.filter((lead) => ['Conversando', 'Agendado', 'Visitou', 'Proposta'].includes(lead.stage)).length;
@@ -9,12 +9,16 @@ function createReportsModule({ database, attoAi }) {
   }
 
   return {
-    dashboard(context) {
-      const data = metrics(context.companyId);
+    async dashboard(context) {
+      const data = await metrics(context.companyId);
+      const [connections, campaigns] = await Promise.all([
+        database.listWhatsappConnections(context.companyId),
+        database.listCampaigns(context.companyId),
+      ]);
       return {
         ...data,
-        connectionsOnline: database.listWhatsappConnections(context.companyId).filter((connection) => connection.status === 'connected').length,
-        campaigns: database.listCampaigns(context.companyId).length,
+        connectionsOnline: connections.filter((connection) => connection.status === 'connected').length,
+        campaigns: campaigns.length,
         aiInsight: attoAi.explainMetrics({ ...context, module: 'reports' }, data),
       };
     },

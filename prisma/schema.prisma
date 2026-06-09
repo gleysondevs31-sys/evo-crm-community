@@ -7,13 +7,71 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum CompanyStatus {
+  active
+  blocked
+}
+
+enum UserStatus {
+  active
+  inactive
+  blocked
+}
+
+enum WhatsAppConnectionStatus {
+  pending
+  qr_required
+  connected
+  disconnected
+  reconnecting
+  blocked
+  error
+}
+
+enum ContactStatus {
+  valid
+  invalid
+  duplicate
+  blocked
+}
+
+enum CampaignStatus {
+  draft
+  scheduled
+  running
+  paused
+  completed
+  canceled
+  failed
+}
+
+enum CampaignContactStatus {
+  pending
+  queued
+  sending
+  sent
+  failed
+  skipped
+  canceled
+}
+
+enum MessageJobStatus {
+  pending
+  queued
+  sending
+  sent
+  failed
+  skipped
+  canceled
+}
+
 model Company {
-  id          String   @id
+  id          String        @id
   name        String
-  slug        String   @unique
-  status      String   @default("active")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  slug        String        @unique
+  status      CompanyStatus @default(active)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
   users       User[]
   connections WhatsAppConnection[]
   lists       ContactList[]
@@ -23,45 +81,57 @@ model Company {
   jobs        MessageJob[]
   logs        MessageLog[]
   audits      AuditLog[]
+
+  @@index([status])
+  @@index([createdAt])
 }
 
 model User {
-  id        String   @id
+  id        String     @id
   companyId String
   name      String
   email     String
   role      String
-  status    String   @default("active")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  company   Company  @relation(fields: [companyId], references: [id])
-  @@index([companyId])
+  status    UserStatus @default(active)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, email])
+  @@index([companyId, status])
+  @@index([companyId, createdAt])
 }
 
 model WhatsAppConnection {
-  id              String   @id
-  companyId       String
-  name            String
-  phoneNumber     String
-  status          String
-  qrCode          String?
-  connectedAt     DateTime?
-  lastHeartbeatAt DateTime?
-  messagesSent    Int      @default(0)
-  totalFailures   Int      @default(0)
-  dailyLimit      Int      @default(500)
-  hourlyLimit     Int      @default(60)
-  delayMinMs      Int      @default(12000)
-  delayMaxMs      Int      @default(45000)
-  sessionPath     String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  company         Company  @relation(fields: [companyId], references: [id])
-  campaigns       Campaign[]
-  jobs            MessageJob[]
-  logs            MessageLog[]
-  @@index([companyId])
+  id               String                  @id
+  companyId        String
+  name             String
+  phoneNumber      String
+  status           WhatsAppConnectionStatus @default(pending)
+  qrCode           String?
+  connectedAt      DateTime?
+  lastHeartbeatAt  DateTime?
+  messagesSent     Int                     @default(0)
+  messagesReceived Int                     @default(0)
+  totalFailures    Int                     @default(0)
+  dailyLimit       Int                     @default(500)
+  hourlyLimit      Int                     @default(60)
+  delayMinMs       Int                     @default(12000)
+  delayMaxMs       Int                     @default(45000)
+  sentToday        Int                     @default(0)
+  sentThisHour     Int                     @default(0)
+  healthScore      Int                     @default(100)
+  sessionPath      String
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  company          Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  campaigns        Campaign[]
+  jobs             MessageJob[]
+  logs             MessageLog[]
+
+  @@unique([companyId, phoneNumber])
   @@index([companyId, status])
+  @@index([companyId, createdAt])
 }
 
 model ContactList {
@@ -75,34 +145,37 @@ model ContactList {
   duplicateContacts Int      @default(0)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-  company           Company  @relation(fields: [companyId], references: [id])
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   contacts          Contact[]
   campaigns         Campaign[]
-  @@index([companyId])
+
+  @@index([companyId, createdAt])
 }
 
 model Contact {
-  id              String   @id
-  companyId       String
-  contactListId   String
-  name            String
-  phone           String
-  rawPhone        String
-  tags            String   @default("[]")
-  customFields    String   @default("{}")
-  origin          String
-  status          String
-  validationError String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  company         Company  @relation(fields: [companyId], references: [id])
-  list            ContactList @relation(fields: [contactListId], references: [id])
+  id               String        @id
+  companyId        String
+  listId           String
+  name             String
+  phone            String
+  rawPhone         String
+  tags             Json          @default("[]")
+  customFields     Json          @default("{}")
+  origin           String
+  status           ContactStatus @default(valid)
+  validationError  String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  company          Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  list             ContactList   @relation(fields: [listId], references: [id], onDelete: Cascade)
   campaignContacts CampaignContact[]
-  jobs            MessageJob[]
-  logs            MessageLog[]
-  @@unique([companyId, contactListId, phone])
-  @@index([companyId])
+  jobs             MessageJob[]
+  logs             MessageLog[]
+
+  @@unique([companyId, listId, phone])
   @@index([companyId, status])
+  @@index([companyId, createdAt])
+  @@index([companyId, listId])
 }
 
 model MessageTemplate {
@@ -111,84 +184,92 @@ model MessageTemplate {
   name      String
   body      String
   mediaUrl  String?
-  variables String   @default("[]")
+  variables Json     @default("[]")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  company   Company  @relation(fields: [companyId], references: [id])
-  @@index([companyId])
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
 }
 
 model Campaign {
-  id             String   @id
+  id             String         @id
   companyId      String
   connectionId   String
   contactListId  String
   name           String
   message        String
   mediaUrl       String?
-  status         String
-  totalContacts  Int      @default(0)
-  totalSent      Int      @default(0)
-  totalDelivered Int      @default(0)
-  totalFailures  Int      @default(0)
-  totalPending   Int      @default(0)
+  status         CampaignStatus @default(draft)
+  totalContacts  Int            @default(0)
+  totalSent      Int            @default(0)
+  totalDelivered Int            @default(0)
+  totalFailures  Int            @default(0)
+  totalPending   Int            @default(0)
   scheduledAt    DateTime?
   startedAt      DateTime?
   finishedAt     DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  company        Company  @relation(fields: [companyId], references: [id])
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  company        Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
   connection     WhatsAppConnection @relation(fields: [connectionId], references: [id])
-  contactList    ContactList @relation(fields: [contactListId], references: [id])
+  contactList    ContactList    @relation(fields: [contactListId], references: [id])
   contacts       CampaignContact[]
   jobs           MessageJob[]
   logs           MessageLog[]
-  @@index([companyId])
+
   @@index([companyId, status])
+  @@index([companyId, createdAt])
+  @@index([companyId, connectionId])
 }
 
 model CampaignContact {
-  id                String   @id
+  id                String                @id
   companyId         String
   campaignId        String
   contactId         String
-  status            String
+  status            CampaignContactStatus @default(pending)
   providerMessageId String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  campaign          Campaign @relation(fields: [campaignId], references: [id])
-  contact           Contact  @relation(fields: [contactId], references: [id])
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  campaign          Campaign              @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact           Contact               @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
   @@unique([companyId, campaignId, contactId])
-  @@index([companyId])
   @@index([companyId, status])
+  @@index([companyId, campaignId])
+  @@index([companyId, createdAt])
 }
 
 model MessageJob {
-  id                String   @id
+  id                String           @id
   companyId         String
   campaignId        String
   contactId         String
   connectionId      String
   message           String
   mediaUrl          String?
-  attempt           Int      @default(0)
-  maxAttempts       Int      @default(3)
-  status            String
+  attempt           Int              @default(0)
+  maxAttempts       Int              @default(3)
+  status            MessageJobStatus @default(pending)
   scheduledAt       DateTime
   idempotencyKey    String
   queueJobId        String
   providerMessageId String?
+  error             String?
   startedAt         DateTime?
   sentAt            DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  company           Company  @relation(fields: [companyId], references: [id])
-  campaign          Campaign @relation(fields: [campaignId], references: [id])
-  contact           Contact  @relation(fields: [contactId], references: [id])
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  company           Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  campaign          Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact           Contact          @relation(fields: [contactId], references: [id])
   connection        WhatsAppConnection @relation(fields: [connectionId], references: [id])
+
   @@unique([companyId, idempotencyKey])
-  @@index([companyId])
   @@index([companyId, status])
+  @@index([companyId, campaignId])
+  @@index([companyId, createdAt])
 }
 
 model MessageLog {
@@ -202,14 +283,16 @@ model MessageLog {
   message      String?
   status       String
   error        String?
+  metadata     Json     @default("{}")
   createdAt    DateTime @default(now())
-  company      Company @relation(fields: [companyId], references: [id])
-  campaign     Campaign? @relation(fields: [campaignId], references: [id])
-  connection   WhatsAppConnection? @relation(fields: [connectionId], references: [id])
-  contact      Contact? @relation(fields: [contactId], references: [id])
-  @@index([companyId])
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  campaign     Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  connection   WhatsAppConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  contact      Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
   @@index([companyId, campaignId])
   @@index([companyId, type])
+  @@index([companyId, createdAt])
 }
 
 model AuditLog {
@@ -217,10 +300,11 @@ model AuditLog {
   companyId  String
   actorId    String?
   action     String
-  entityType String
+  entityType String   @default("attozap")
   entityId   String?
-  payload    String
+  payload    Json     @default("{}")
   createdAt  DateTime @default(now())
-  company    Company  @relation(fields: [companyId], references: [id])
-  @@index([companyId])
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
 }
