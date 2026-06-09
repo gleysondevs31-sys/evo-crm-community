@@ -3,7 +3,7 @@ const publicPages = [
 ];
 
 const internalPages = [
-  '/app', '/app/dashboard', '/app/inbox', '/app/inbox/[conversationId]', '/app/crm', '/app/crm/leads', '/app/crm/leads/[id]', '/app/crm/pipeline', '/app/crm/contacts', '/app/crm/companies', '/app/crm/tasks', '/app/campaigns', '/app/campaigns/new', '/app/campaigns/[id]', '/app/whatsapp', '/app/whatsapp/connections', '/app/whatsapp/connections/new', '/app/whatsapp/qr', '/app/automations', '/app/automations/new', '/app/automations/[id]', '/app/ai', '/app/ai/playground', '/app/ai/providers', '/app/ai/knowledge-base', '/app/reports', '/app/reports/sales', '/app/reports/campaigns', '/app/reports/team', '/app/reports/whatsapp', '/app/gamification', '/app/ranking', '/app/goals', '/app/team', '/app/team/users', '/app/team/roles', '/app/settings', '/app/settings/company', '/app/settings/users', '/app/settings/billing', '/app/settings/security', '/app/settings/api-keys', '/app/settings/webhooks', '/app/settings/integrations', '/app/admin', '/app/admin/companies', '/app/admin/plans', '/app/admin/audit', '/app/admin/system-health',
+  '/app', '/app/dashboard', '/app/disparos', '/app/disparos/nova', '/app/disparos/[id]', '/app/disparos/[id]/logs', '/app/conexoes', '/app/conexoes/nova', '/app/listas', '/app/listas/nova', '/app/templates', '/app/inbox', '/app/inbox/[conversationId]', '/app/crm', '/app/crm/leads', '/app/crm/leads/[id]', '/app/crm/pipeline', '/app/crm/contacts', '/app/crm/companies', '/app/crm/tasks', '/app/campaigns', '/app/campaigns/new', '/app/campaigns/[id]', '/app/whatsapp', '/app/whatsapp/connections', '/app/whatsapp/connections/new', '/app/whatsapp/qr', '/app/automations', '/app/automations/new', '/app/automations/[id]', '/app/ai', '/app/ai/playground', '/app/ai/providers', '/app/ai/knowledge-base', '/app/reports', '/app/reports/sales', '/app/reports/campaigns', '/app/reports/team', '/app/reports/whatsapp', '/app/gamification', '/app/ranking', '/app/goals', '/app/team', '/app/team/users', '/app/team/roles', '/app/settings', '/app/settings/company', '/app/settings/users', '/app/settings/billing', '/app/settings/security', '/app/settings/api-keys', '/app/settings/webhooks', '/app/settings/integrations', '/app/admin', '/app/admin/companies', '/app/admin/plans', '/app/admin/audit', '/app/admin/system-health',
 ];
 
 const systemPages = [
@@ -17,6 +17,7 @@ function pageTitle(path) {
 }
 
 function pageDescription(path) {
+  if (path.startsWith('/app/disparos') || path.startsWith('/app/conexoes') || path.startsWith('/app/listas') || path.startsWith('/app/templates')) return 'ATTOZAP Disparos para campanhas WhatsApp, conexões Baileys, listas, templates, filas e logs operacionais.';
   if (path.startsWith('/app')) return 'Área interna ATTO FLOW para CRM, WhatsApp, automações, relatórios, gamificação e gestão enterprise.';
   if (path === '/') return 'Unifique CRM, WhatsApp, campanhas, automação, atendimento omnichannel e IA interna em uma plataforma SaaS enterprise.';
   return 'Conheça a ATTO FLOW: plataforma SaaS enterprise para CRM, WhatsApp, automação, IA, relatórios e produtividade comercial.';

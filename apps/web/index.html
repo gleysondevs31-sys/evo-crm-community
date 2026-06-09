@@ -67,7 +67,7 @@
   <script>
     window.__ATTO_ROUTE__ = '__ATTO_ROUTE__';
     const publicRoutes = new Set(['/', '/precos', '/recursos', '/crm', '/whatsapp', '/automacao', '/ia', '/relatorios', '/integracoes', '/seguranca', '/clientes', '/casos-de-uso', '/imobiliarias', '/vendas', '/atendimento', '/blog', '/docs', '/docs/api', '/changelog', '/status', '/sobre', '/contato', '/login', '/cadastro', '/demo', '/politica-de-privacidade', '/termos-de-uso', '/cookies', '/lgpd']);
-    const appLinks = ['/app/dashboard','/app/inbox','/app/crm/pipeline','/app/campaigns','/app/whatsapp/connections','/app/automations','/app/ai/playground','/app/reports','/app/gamification','/app/team/users','/app/settings/company','/app/admin/system-health'];
+    const appLinks = ['/app/disparos','/app/disparos/nova','/app/conexoes','/app/conexoes/nova','/app/listas','/app/listas/nova','/app/templates','/app/dashboard','/app/admin/system-health'];
     const root = document.getElementById('root');
     document.getElementById('theme').onclick = () => document.body.dataset.theme = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
 
@@ -99,24 +99,27 @@
     }
 
     function appPage(path) {
-      root.innerHTML = `<div class="app-layout"><aside class="panel app-menu"><strong>ATTO FLOW</strong>${appLinks.map((href) => `<a href="${href}">${href.replace('/app/','').replaceAll('/',' · ')}</a>`).join('')}</aside><section><div class="card"><div class="eyebrow">${path}</div><h1 style="font-size:54px">${path === '/app' ? 'Dashboard' : path.split('/').filter(Boolean).slice(1).join(' · ')}</h1><p>Área operacional enterprise com RBAC, multiempresa, dados reais do MVP e integração ATTO AI.</p></div><div id="app-content" style="margin-top:18px"></div></section></div>`;
+      root.innerHTML = `<div class="app-layout"><aside class="panel app-menu"><strong>ATTOZAP DISPAROS</strong>${appLinks.map((href) => `<a href="${href}">${href.replace('/app/','').replaceAll('/',' · ')}</a>`).join('')}</aside><section><div class="card"><div class="eyebrow">${path}</div><h1 style="font-size:54px">${path === '/app' ? 'Dashboard' : path.split('/').filter(Boolean).slice(1).join(' · ')}</h1><p>Operação focada em disparos WhatsApp: campanhas, conexões, listas, templates, filas, limites, logs e tempo real.</p></div><div id="app-content" style="margin-top:18px"></div></section></div>`;
       hydrateApp(path);
     }
 
     async function hydrateApp(path) {
       const box = document.getElementById('app-content');
-      const [dashboard, stages, leads, inbox, logs, health] = await Promise.all([api('/api/dashboard'), api('/api/crm/stages'), api('/api/crm/leads'), api('/api/attozap/inbox'), api('/api/atto-ai/logs'), api('/api/admin/system-health')]);
-      if (path.includes('pipeline') || path.includes('crm')) {
-        box.innerHTML = `<div class="kanban">${stages.stages.slice(0,8).map(stage => `<div class="card"><h3>${stage}</h3>${leads.leads.filter(l => l.stage === stage).map(l => `<div class="lead-card"><strong>${l.name}</strong><p>${l.origin} · score ${l.score}</p><button onclick="suggest('${l.id}')">ATTO AI</button></div>`).join('') || '<p>Sem leads</p>'}</div>`).join('')}</div>`;
-      } else if (path.includes('inbox') || path.includes('whatsapp')) {
-        box.innerHTML = `<div class="feature-grid">${inbox.conversations.map(c => `<div class="card"><h3>${c.leadName}</h3><p>${c.phone}</p><p>${c.preview}</p></div>`).join('')}</div>`;
-      } else if (path.includes('ai')) {
-        box.innerHTML = `<pre>${JSON.stringify(logs.logs, null, 2)}</pre>`;
+      const [overview, campaigns, connections, lists, templates, health] = await Promise.all([api('/api/disparos/overview'), api('/api/disparos/campanhas'), api('/api/disparos/conexoes'), api('/api/disparos/listas'), api('/api/disparos/templates'), api('/api/admin/system-health')]);
+      if (path.includes('disparos')) {
+        box.innerHTML = `<div class="metric-grid">${[['Campanhas',overview.campaigns],['Rodando',overview.running],['Enviadas',overview.sent],['Falhas',overview.failures]].map(([k,v]) => `<div class="card"><div class="eyebrow">${k}</div><h2>${v}</h2></div>`).join('')}</div><div class="feature-grid">${campaigns.campaigns.map(c => `<div class="card"><div class="eyebrow">${c.status}</div><h3>${c.name}</h3><p>${c.totalSent} enviados · ${c.totalFailures} falhas · ${c.totalPending} pendentes</p><div class="hero-actions"><button onclick="campaignAction('${c.id}','start')">Iniciar</button><button onclick="campaignAction('${c.id}','pause')">Pausar</button><button onclick="campaignAction('${c.id}','resume')">Retomar</button><button onclick="campaignAction('${c.id}','cancel')">Cancelar</button></div><a href="/app/disparos/${c.id}/logs">Ver logs</a></div>`).join('')}</div>`;
+      } else if (path.includes('conexoes')) {
+        box.innerHTML = `<div class="feature-grid">${connections.connections.map(c => `<div class="card"><div class="eyebrow">${c.status}</div><h3>${c.name}</h3><p>${c.phoneNumber} · ${c.messagesSent} enviadas · ${c.totalFailures} falhas</p><p>Limites: ${c.hourlyLimit}/hora · ${c.dailyLimit}/dia</p><code>${c.qrCode || 'conectado'}</code></div>`).join('')}</div>`;
+      } else if (path.includes('listas')) {
+        box.innerHTML = `<div class="feature-grid">${lists.lists.map(l => `<div class="card"><h3>${l.name}</h3><p>${l.validContacts} válidos · ${l.invalidContacts} inválidos · ${l.duplicateContacts} duplicados</p><p>${l.source}</p></div>`).join('')}</div>`;
+      } else if (path.includes('templates')) {
+        box.innerHTML = `<div class="feature-grid">${templates.templates.map(t => `<div class="card"><h3>${t.name}</h3><p>${t.body}</p><div class="eyebrow">${t.variables.join(', ')}</div></div>`).join('')}</div>`;
       } else {
-        box.innerHTML = `<div class="metric-grid">${[['Leads',dashboard.totalLeads],['Conversas',dashboard.activeConversations],['Conversão',dashboard.conversionRate+'%'],['Saúde',health.status]].map(([k,v]) => `<div class="card"><div class="eyebrow">${k}</div><h2>${v}</h2></div>`).join('')}</div><div class="card"><h3>Insight</h3><p>${dashboard.aiInsight}</p></div>`;
+        box.innerHTML = `<div class="metric-grid">${[['Campanhas',overview.campaigns],['Conectadas',overview.connected],['Fila',health.queueDepth],['Falhas',overview.failures]].map(([k,v]) => `<div class="card"><div class="eyebrow">${k}</div><h2>${v}</h2></div>`).join('')}</div><div class="card"><h3>ATTOZAP DISPAROS</h3><p>Painel administrativo para controlar conexões, listas, templates, campanhas, filas, pausas, retomadas, cancelamentos e logs.</p></div>`;
       }
     }
 
+    async function campaignAction(campaignId, action) { const data = await api(`/api/disparos/campanhas/${campaignId}/${action}`, { method: 'POST', body: '{}' }); if (data.error) alert(data.error); appPage(location.pathname); }
     async function suggest(leadId) { const data = await api(`/api/attozap/leads/${leadId}/suggest-reply`); alert(data.suggestion || 'Sem sugestão'); appPage(location.pathname); }
     function generic(path) { root.innerHTML = `<section class="hero"><div class="eyebrow">ATTO FLOW</div><h1>${path === '/404' ? 'Página não encontrada' : path.replace(/^\//,'').replaceAll('/',' · ').replaceAll('-',' ')}</h1><p class="lead">Página estruturada com SEO, CTA, conteúdo e links internos para a plataforma enterprise.</p><div class="hero-actions"><a class="btn primary" href="/demo">Agendar demo</a><a class="btn" href="/">Voltar</a></div></section>`; }
     const route = window.__ATTO_ROUTE__ === '__ATTO_ROUTE__' ? location.pathname : window.__ATTO_ROUTE__;

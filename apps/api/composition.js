@@ -29,6 +29,7 @@ function createAttoFlowApp() {
   const omnichannel = createOmnichannelModule();
 
   queue.process('campaign.dispatch', async ({ companyId, campaignId }) => ({ delivered: true, companyId, campaignId }));
+  queue.process('attozap.message.send', async ({ companyId, messageJobId }) => attozap.processMessageJob({ companyId, userId: config.defaultUserId, role: 'owner', can: () => true }, messageJobId));
   queue.process('automation.followup', async ({ companyId, leadId, taskId }) => ({ created: true, companyId, leadId, taskId }));
 
   return { config, database, queue, attoAi, crm, attozap, automation, reports, gamification, seo, admin, billing, integrations, omnichannel };

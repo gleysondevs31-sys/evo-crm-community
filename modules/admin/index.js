@@ -10,6 +10,7 @@ function createAdminModule({ database, queue }) {
         users: database.db.users.length,
         leads: database.db.leads.length,
         queuedJobs: queue.list().filter((job) => job.status === 'queued').length,
+        queueDepth: queue.list().filter((job) => ['queued', 'paused', 'running'].includes(job.status)).length,
         completedJobs: queue.list().filter((job) => job.status === 'completed').length,
       };
     },

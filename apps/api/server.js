@@ -49,6 +49,16 @@ function sendText(res, status, content, contentType = 'text/plain') {
   res.end(content);
 }
 
+function sendEventStream(res, payload) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-store',
+    connection: 'keep-alive',
+  });
+  res.write(`event: snapshot\ndata: ${JSON.stringify(payload)}\n\n`);
+  res.end();
+}
+
 function sendStatic(res, filePath) {
   const types = { '.css': 'text/css', '.js': 'application/javascript', '.svg': 'image/svg+xml', '.html': 'text/html' };
   res.writeHead(200, { 'content-type': `${types[extname(filePath)] || 'text/plain'}; charset=utf-8` });
@@ -105,14 +115,116 @@ async function route(req, res) {
   if (url.pathname === '/api/status') {
     return sendJson(res, 200, {
       name: app.config.appName,
-      mode: 'modular-mvp',
+      mode: 'attozap-disparos-mvp',
       company: app.database.getCompany(ctx.companyId),
-      modules: ['attozap', 'atto-ai', 'crm', 'automation', 'reports', 'gamification'],
+      modules: ['attozap-disparos'],
     });
   }
 
   if (url.pathname === '/api/dashboard') {
     return sendJson(res, 200, app.reports.dashboard(ctx));
+  }
+
+  if (url.pathname === '/api/disparos/events') {
+    return sendEventStream(res, {
+      campaigns: app.attozap.listCampaigns(ctx),
+      connections: app.attozap.listConnections(ctx),
+      queue: app.queue.list({ type: 'attozap.message.send' }),
+      logs: app.attozap.listLogs(ctx).slice(-25),
+    });
+  }
+
+  if (url.pathname === '/api/disparos/overview') {
+    const campaigns = app.attozap.listCampaigns(ctx);
+    const connections = app.attozap.listConnections(ctx);
+    const logs = app.attozap.listLogs(ctx);
+    return sendJson(res, 200, {
+      campaigns: campaigns.length,
+      running: campaigns.filter((campaign) => campaign.status === 'running').length,
+      paused: campaigns.filter((campaign) => campaign.status === 'paused').length,
+      sent: campaigns.reduce((sum, campaign) => sum + campaign.totalSent, 0),
+      failures: campaigns.reduce((sum, campaign) => sum + campaign.totalFailures, 0),
+      connected: connections.filter((connection) => connection.status === 'connected').length,
+      recentLogs: logs.slice(-10),
+    });
+  }
+
+  if (url.pathname === '/api/disparos/conexoes') {
+    if (req.method === 'POST') {
+      const body = await readBody(req);
+      return sendJson(res, 201, { connection: app.attozap.createConnection(ctx, body) });
+    }
+    return sendJson(res, 200, { connections: app.attozap.listConnections(ctx) });
+  }
+
+  const connectionStatusMatch = url.pathname.match(/^\/api\/disparos\/conexoes\/([^/]+)\/status$/);
+  if (connectionStatusMatch && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, { connection: app.attozap.updateConnectionStatus(ctx, connectionStatusMatch[1], body.status) });
+  }
+
+  if (url.pathname === '/api/disparos/listas') {
+    if (req.method === 'POST') {
+      const body = await readBody(req);
+      return sendJson(res, 201, { list: app.attozap.createContactList(ctx, body) });
+    }
+    return sendJson(res, 200, { lists: app.attozap.listContactLists(ctx) });
+  }
+
+  const listContactsMatch = url.pathname.match(/^\/api\/disparos\/listas\/([^/]+)\/contatos$/);
+  if (listContactsMatch) {
+    return sendJson(res, 200, { contacts: app.attozap.listContacts(ctx, listContactsMatch[1]) });
+  }
+
+  if (url.pathname === '/api/disparos/templates') {
+    if (req.method === 'POST') {
+      const body = await readBody(req);
+      return sendJson(res, 201, { template: app.attozap.createTemplate(ctx, body) });
+    }
+    return sendJson(res, 200, { templates: app.attozap.listTemplates(ctx) });
+  }
+
+  if (url.pathname === '/api/disparos/preview') {
+    const body = req.method === 'POST' ? await readBody(req) : { message: url.searchParams.get('message') || '' };
+    return sendJson(res, 200, app.attozap.previewMessage(ctx, body));
+  }
+
+  if (url.pathname === '/api/disparos/campanhas') {
+    if (req.method === 'POST') {
+      const body = await readBody(req);
+      return sendJson(res, 201, { campaign: app.attozap.createCampaign(ctx, body) });
+    }
+    return sendJson(res, 200, { campaigns: app.attozap.listCampaigns(ctx) });
+  }
+
+  const campaignMatch = url.pathname.match(/^\/api\/disparos\/campanhas\/([^/]+)$/);
+  if (campaignMatch) {
+    if (req.method === 'PATCH') {
+      const body = await readBody(req);
+      return sendJson(res, 200, { campaign: app.attozap.updateCampaign(ctx, campaignMatch[1], body) });
+    }
+    if (req.method === 'DELETE') {
+      return sendJson(res, 200, { deleted: app.attozap.deleteCampaign(ctx, campaignMatch[1]) });
+    }
+    return sendJson(res, 200, { campaign: app.attozap.getCampaign(ctx, campaignMatch[1]) });
+  }
+
+  const campaignActionMatch = url.pathname.match(/^\/api\/disparos\/campanhas\/([^/]+)\/(start|pause|resume|cancel|duplicate)$/);
+  if (campaignActionMatch && req.method === 'POST') {
+    const [, campaignId, action] = campaignActionMatch;
+    const handlers = {
+      start: () => app.attozap.startCampaign(ctx, campaignId),
+      pause: () => app.attozap.pauseCampaign(ctx, campaignId),
+      resume: () => app.attozap.resumeCampaign(ctx, campaignId),
+      cancel: () => app.attozap.cancelCampaign(ctx, campaignId),
+      duplicate: () => app.attozap.duplicateCampaign(ctx, campaignId),
+    };
+    return sendJson(res, 200, { campaign: handlers[action]() });
+  }
+
+  const campaignLogsMatch = url.pathname.match(/^\/api\/disparos\/campanhas\/([^/]+)\/logs$/);
+  if (campaignLogsMatch) {
+    return sendJson(res, 200, { logs: app.attozap.listLogs(ctx, { campaignId: campaignLogsMatch[1] }) });
   }
 
   if (url.pathname === '/api/crm/stages') {
@@ -275,12 +387,24 @@ function renderInitialContent(pathname, ctx) {
     const leads = filterLeadsForContext(app.crm.listLeads(ctx), ctx);
     const inbox = app.attozap.inbox(ctx);
     const health = app.admin.systemHealth();
-    const menu = ['/app/dashboard','/app/inbox','/app/crm/pipeline','/app/campaigns','/app/whatsapp/connections','/app/automations','/app/ai/playground','/app/reports','/app/gamification','/app/team/users','/app/settings/company','/app/admin/system-health']
+    const menu = ['/app/disparos','/app/disparos/nova','/app/conexoes','/app/conexoes/nova','/app/listas','/app/listas/nova','/app/templates','/app/dashboard','/app/admin/system-health']
       .map((href) => `<a href="${href}">${escapeHtml(href.replace('/app/','').replaceAll('/',' · '))}</a>`)
       .join('');
     let content = `<div class="metric-grid">${[['Leads',dashboard.totalLeads],['Conversas',dashboard.activeConversations],['Conversão',`${dashboard.conversionRate}%`],['Saúde',health.status]].map(([k,v]) => `<div class="card"><div class="eyebrow">${escapeHtml(k)}</div><h2>${escapeHtml(v)}</h2></div>`).join('')}</div><div class="card"><h3>Insight</h3><p>${escapeHtml(dashboard.aiInsight)}</p></div>`;
 
-    if (pathname.includes('pipeline') || pathname.includes('crm')) {
+    if (pathname.includes('disparos')) {
+      const campaigns = app.attozap.listCampaigns(ctx);
+      content = `<div class="metric-grid">${[['Campanhas',campaigns.length],['Rodando',campaigns.filter((campaign) => campaign.status === 'running').length],['Enviadas',campaigns.reduce((sum, campaign) => sum + campaign.totalSent, 0)],['Falhas',campaigns.reduce((sum, campaign) => sum + campaign.totalFailures, 0)]].map(([k,v]) => `<div class="card"><div class="eyebrow">${escapeHtml(k)}</div><h2>${escapeHtml(v)}</h2></div>`).join('')}</div><div class="feature-grid">${campaigns.map((campaign) => `<div class="card"><div class="eyebrow">${escapeHtml(campaign.status)}</div><h3>${escapeHtml(campaign.name)}</h3><p>${escapeHtml(campaign.totalSent)} enviados · ${escapeHtml(campaign.totalFailures)} falhas · ${escapeHtml(campaign.totalPending)} pendentes</p><div class="hero-actions"><button onclick="campaignAction('${campaign.id}','start')">Iniciar</button><button onclick="campaignAction('${campaign.id}','pause')">Pausar</button><button onclick="campaignAction('${campaign.id}','resume')">Retomar</button><button onclick="campaignAction('${campaign.id}','cancel')">Cancelar</button></div><a href="/app/disparos/${campaign.id}/logs">Ver logs</a></div>`).join('')}</div>`;
+    } else if (pathname.includes('conexoes')) {
+      const connections = app.attozap.listConnections(ctx);
+      content = `<div class="feature-grid">${connections.map((connection) => `<div class="card"><div class="eyebrow">${escapeHtml(connection.status)}</div><h3>${escapeHtml(connection.name)}</h3><p>${escapeHtml(connection.phoneNumber)} · ${escapeHtml(connection.messagesSent)} enviadas · ${escapeHtml(connection.totalFailures)} falhas</p><p>Limites: ${escapeHtml(connection.hourlyLimit)}/hora · ${escapeHtml(connection.dailyLimit)}/dia</p><code>${escapeHtml(connection.qrCode || 'conectado')}</code></div>`).join('')}</div>`;
+    } else if (pathname.includes('listas')) {
+      const lists = app.attozap.listContactLists(ctx);
+      content = `<div class="feature-grid">${lists.map((list) => `<div class="card"><h3>${escapeHtml(list.name)}</h3><p>${escapeHtml(list.validContacts)} válidos · ${escapeHtml(list.invalidContacts)} inválidos · ${escapeHtml(list.duplicateContacts)} duplicados</p><p>${escapeHtml(list.source)}</p></div>`).join('')}</div>`;
+    } else if (pathname.includes('templates')) {
+      const templates = app.attozap.listTemplates(ctx);
+      content = `<div class="feature-grid">${templates.map((template) => `<div class="card"><h3>${escapeHtml(template.name)}</h3><p>${escapeHtml(template.body)}</p><div class="eyebrow">${escapeHtml(template.variables.join(', '))}</div></div>`).join('')}</div>`;
+    } else if (pathname.includes('pipeline') || pathname.includes('crm')) {
       content = `<div class="kanban">${stages.slice(0, 8).map((stage) => `<div class="card"><h3>${escapeHtml(stage)}</h3>${leads.filter((lead) => lead.stage === stage).map((lead) => `<div class="lead-card"><strong>${escapeHtml(lead.name)}</strong><p>${escapeHtml(lead.origin)} · score ${escapeHtml(lead.score)}</p><button onclick="suggest('${lead.id}')">ATTO AI</button></div>`).join('') || '<p>Sem leads</p>'}</div>`).join('')}</div>`;
     } else if (pathname.includes('inbox') || pathname.includes('whatsapp')) {
       content = `<div class="feature-grid">${inbox.map((conversation) => `<div class="card"><h3>${escapeHtml(conversation.leadName)}</h3><p>${escapeHtml(conversation.phone)}</p><p>${escapeHtml(conversation.preview)}</p></div>`).join('')}</div>`;
@@ -288,7 +412,7 @@ function renderInitialContent(pathname, ctx) {
       content = `<pre>${escapeHtml(JSON.stringify(app.attoAi.usageLogs(ctx.companyId), null, 2))}</pre>`;
     }
 
-    return `<div class="app-layout"><aside class="panel app-menu"><strong>ATTO FLOW</strong>${menu}</aside><section><div class="card"><div class="eyebrow">${escapeHtml(pathname)}</div><h1 style="font-size:54px">${escapeHtml(pathname === '/app' ? 'Dashboard' : pathname.split('/').filter(Boolean).slice(1).join(' · '))}</h1><p>Área operacional enterprise com RBAC, multiempresa, dados reais do MVP e integração ATTO AI.</p></div><div id="app-content" style="margin-top:18px">${content}</div></section></div>`;
+    return `<div class="app-layout"><aside class="panel app-menu"><strong>ATTOZAP DISPAROS</strong>${menu}</aside><section><div class="card"><div class="eyebrow">${escapeHtml(pathname)}</div><h1 style="font-size:54px">${escapeHtml(pathname === '/app' ? 'Dashboard' : pathname.split('/').filter(Boolean).slice(1).join(' · '))}</h1><p>Operação focada em disparos WhatsApp: conexões isoladas, campanhas, listas, templates, filas, limites, logs e tempo real via SSE.</p></div><div id="app-content" style="margin-top:18px">${content}</div></section></div>`;
   }
 
   const label = pathname === '/404' ? 'Página não encontrada' : pathname.replace(/^\//, '').replaceAll('/', ' · ').replaceAll('-', ' ');
