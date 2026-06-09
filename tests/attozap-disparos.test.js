@@ -11,6 +11,7 @@ const { reconcileAttozapDisparos } = require('../modules/attozap/reconciliation'
 const { createLogEntry } = require('../packages/logger');
 const telemetry = require('../packages/telemetry');
 const { getCorrelationId } = require('../packages/correlation');
+const { StatusBadge, HealthScoreBadge, ProgressBar, MetricCard, EmptyState } = require('../packages/ui/attozap-components');
 
 async function main() {
 
@@ -23,6 +24,11 @@ async function main() {
   telemetry.recordException(span, new Error('noop-ok'));
   telemetry.endSpan(span);
   assert.equal(span.exceptions.length, 1);
+  assert.match(StatusBadge('connected'), /success/);
+  assert.match(HealthScoreBadge(42), /warning/);
+  assert.match(ProgressBar(5, 10), /50%/);
+  assert.match(MetricCard('Campanhas', 3), /Campanhas/);
+  assert.match(EmptyState('Sem dados'), /Sem dados/);
 
   assert.throws(() => createQueue({ attoEnv: 'production', queueDriver: 'memory', redisUrl: '', queueMessageSend: 'attozap.message.send' }), /QUEUE_DRIVER deve ser bullmq|memory é proibido/);
   const gatewayBlocked = await validateGatewayReadiness({ attoEnv: 'production', baileysEnabled: false, whatsappGatewayUrl: '', dryRun: true, whatsappSessionsDir: './storage/test-sessions' });
@@ -177,6 +183,9 @@ async function main() {
     assert.equal(typeof readiness.ready, 'boolean');
     const dashboard = await fetch(`http://127.0.0.1:${port}/api/disparos/ops-dashboard`).then((res) => res.json());
     assert.equal(Boolean(dashboard.health), true);
+    const appHtml = await fetch(`http://127.0.0.1:${port}/app/disparos`).then((res) => res.text());
+    assert.match(appHtml, /ATTOZAP DISPAROS/);
+    assert.match(appHtml, /StatusBadge|status-badge/);
   } finally {
     child.kill('SIGTERM');
   }
