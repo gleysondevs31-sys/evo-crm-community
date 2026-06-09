@@ -19,7 +19,11 @@ const config = {
   queueConcurrency: numberFromEnv('QUEUE_CONCURRENCY', 5),
   queueMaxAttempts: numberFromEnv('QUEUE_MAX_ATTEMPTS', 3),
   queueBackoffMs: numberFromEnv('QUEUE_BACKOFF_MS', 5000),
-  whatsappSessionsDir: process.env.WHATSAPP_SESSIONS_DIR || './storage/whatsapp-sessions',
+  whatsappSessionsDir: process.env.WHATSAPP_SESSION_DIR || process.env.WHATSAPP_SESSIONS_DIR || './storage/whatsapp-sessions',
+  whatsappGatewayUrl: process.env.WHATSAPP_GATEWAY_URL || 'http://127.0.0.1:8081',
+  internalApiToken: process.env.INTERNAL_API_TOKEN || '',
+  dryRun: process.env.ATTO_DRY_RUN !== 'false',
+  gatewayTimeoutMs: numberFromEnv('WHATSAPP_GATEWAY_TIMEOUT_MS', 10000),
   baileysEnabled: process.env.ATTO_BAILEYS_ENABLED === 'true',
   gatewayReconnectAttempts: numberFromEnv('WHATSAPP_RECONNECT_ATTEMPTS', 5),
 };

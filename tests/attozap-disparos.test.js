@@ -2,14 +2,30 @@ const assert = require('node:assert/strict');
 const { createAttoFlowApp } = require('../apps/api/composition');
 const { normalizeBrazilianPhone, renderTemplate } = require('../modules/attozap');
 const { createQueue, validateQueueReadiness } = require('../packages/queue');
+const { GatewayClient } = require('../modules/attozap/gateway/gateway-client');
+const { validateGatewayReadiness } = require('../modules/attozap/gateway/readiness');
 
 async function main() {
   assert.throws(() => createQueue({ attoEnv: 'production', queueDriver: 'memory', redisUrl: '', queueMessageSend: 'attozap.message.send' }), /QUEUE_DRIVER deve ser bullmq|memory é proibido/);
+  const gatewayBlocked = await validateGatewayReadiness({ attoEnv: 'production', baileysEnabled: false, whatsappGatewayUrl: '', dryRun: true, whatsappSessionsDir: './storage/test-sessions' });
+  assert.equal(gatewayBlocked.productionReady, false);
+  assert.equal(gatewayBlocked.blockers.includes('baileysDisabled'), true);
+  const dryRunClient = new GatewayClient({ attoEnv: 'production', whatsappGatewayUrl: 'http://gateway.local', internalApiToken: 't' });
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ ok: true, dryRun: true, provider: 'baileys' }) });
+  await assert.rejects(() => dryRunClient.sendMessage({ connectionId: 'x' }), /dryRun/);
+  global.fetch = originalFetch;
+
   const blocked = validateQueueReadiness({ attoEnv: 'production', queueDriver: 'bullmq', redisUrl: '' }, { redisConnected: false });
   assert.equal(blocked.productionReady, false);
   assert.equal(blocked.blockers.some((item) => item.includes('REDIS_URL') || item.includes('Redis')), true);
 
-  const app = createAttoFlowApp();
+  const gatewayClient = {
+    createSession: async ({ companyId, connectionId }) => ({ ok: true, companyId, connectionId, status: 'qr_required', provider: 'baileys', qrCode: 'qr-test', sessionPath: `storage/test/${companyId}/${connectionId}`, dryRun: false }),
+    sendMessage: async ({ connectionId }) => ({ ok: true, provider: 'baileys', dryRun: false, messageId: `baileys-test-${connectionId}` }),
+    health: async () => ({ ok: true, provider: 'baileys', dryRun: false }),
+  };
+  const app = createAttoFlowApp({ gatewayClient });
   const ctx = { companyId: app.config.defaultCompanyId, userId: app.config.defaultUserId, role: 'owner', can: () => true };
 
   const normalized = normalizeBrazilianPhone('(11) 98888-7777');

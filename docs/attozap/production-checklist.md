@@ -64,3 +64,51 @@ redis-cli -u "$REDIS_URL" --scan --pattern 'bull:attozap.message.send*'
 - `productionReady=true`
 - `blockers=[]`
 - métricas `waiting`, `delayed`, `active`, `failed`, `completed`, `paused`
+
+## WhatsApp Gateway / Baileys Production
+
+### Variáveis obrigatórias
+
+```env
+ATTO_ENV=production
+ATTO_BAILEYS_ENABLED=true
+ATTO_DRY_RUN=false
+WHATSAPP_GATEWAY_URL=http://127.0.0.1:14212
+WHATSAPP_SESSION_DIR=/var/lib/atto-flow/whatsapp-sessions
+INTERNAL_API_TOKEN=change-me
+ATTO_API_BASE_URL=http://127.0.0.1:10000
+```
+
+### Como iniciar gateway e API
+
+```bash
+npm run api
+WHATSAPP_GATEWAY_PORT=14212 npm run gateway
+npm run worker
+```
+
+### Como conectar sessão e ver QR
+
+1. Crie a conexão pela API `POST /api/disparos/conexoes`.
+2. Consulte `GET /sessions/{connectionId}/qr` no gateway.
+3. Escaneie o QR pelo WhatsApp.
+4. Valide `GET /api/disparos/health` até `gatewayProvider=baileys`, `baileysEnabled=true` e `dryRunAllowed=false` em produção.
+
+### Smoke tests
+
+```bash
+ATTO_BAILEYS_ENABLED=true WHATSAPP_GATEWAY_URL=http://127.0.0.1:14212 npm run smoke:gateway
+TEST_PHONE=55XXXXXXXXXXX npm run smoke:send
+```
+
+### Erros comuns
+
+- `baileysDisabled`: defina `ATTO_BAILEYS_ENABLED=true`.
+- `dryRunEnabled`: defina `ATTO_DRY_RUN=false` em produção.
+- `gatewayUnreachable`: confirme porta, URL e firewall.
+- `sessionDirNotWritable`: ajuste permissão do `WHATSAPP_SESSION_DIR`.
+- `baileys_socket_not_ready`: escaneie o QR ou aguarde reconexão.
+
+### Limpeza e recovery
+
+Cada conexão usa sessão isolada em `WHATSAPP_SESSION_DIR/{companyId}/{connectionId}`. Para resetar uma conexão, desconecte a sessão, pare o gateway, remova apenas a pasta do `connectionId` afetado e suba o gateway novamente. No restart, o gateway recria sockets a partir das pastas existentes e sincroniza status/QR/heartbeat pela API interna protegida por `INTERNAL_API_TOKEN`.

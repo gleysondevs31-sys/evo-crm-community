@@ -15,6 +15,8 @@
     "test": "NODE_ENV=test DATABASE_DRIVER=memory node tests/attozap-disparos.test.js",
     "smoke:db": "DATABASE_DRIVER=prisma node scripts/smoke-db.js",
     "smoke:queue": "QUEUE_DRIVER=bullmq node scripts/smoke-queue.js",
+    "smoke:gateway": "node scripts/smoke-gateway.js",
+    "smoke:send": "node scripts/smoke-send.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js"

@@ -6,6 +6,7 @@ const { getRequestContext, filterLeadsForContext } = require('../../packages/aut
 const { logger } = require('../../packages/logger');
 const { pages } = require('../../packages/config/routes');
 const { schema, sensitiveTables } = require('../../packages/database/schema');
+const { validateGatewayReadiness } = require('../../modules/attozap/gateway/readiness');
 
 const app = createAttoFlowApp();
 const startedAt = new Date();
@@ -82,6 +83,36 @@ async function route(req, res) {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const ctx = context(req);
 
+
+  const internalMatch = url.pathname.match(/^\/api\/internal\/whatsapp\/connections\/([^/]+)\/(status|qr|heartbeat|log)$/);
+  if (internalMatch && req.method === 'POST') {
+    const auth = req.headers.authorization || '';
+    if (!app.config.internalApiToken || auth !== `Bearer ${app.config.internalApiToken}`) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+    const [, connectionId, action] = internalMatch;
+    const body = await readBody(req);
+    if (!body.companyId) return sendJson(res, 400, { ok: false, error: 'companyId_required' });
+    if (action === 'status' || action === 'heartbeat') {
+      const patch = { lastHeartbeatAt: new Date().toISOString() };
+      if (body.status) patch.status = body.status;
+      if (body.sessionPath) patch.sessionPath = body.sessionPath;
+      if (body.qrCode) patch.qrCode = body.qrCode;
+      if (body.status === 'connected') patch.connectedAt = patch.lastHeartbeatAt;
+      const connection = await app.database.updateWhatsappConnection(body.companyId, connectionId, patch);
+      await app.database.createMessageLog({ companyId: body.companyId, connectionId, type: `gateway.${action}`, status: 'info', message: body.status || action, metadata: body });
+      app.eventBus.publish({ type: `gateway.${action}`, companyId: body.companyId, connectionId, payload: { connection } });
+      return sendJson(res, 200, { ok: true, connection });
+    }
+    if (action === 'qr') {
+      const connection = await app.database.updateWhatsappConnection(body.companyId, connectionId, { status: 'qr_required', qrCode: body.qrCode, sessionPath: body.sessionPath });
+      await app.database.createMessageLog({ companyId: body.companyId, connectionId, type: 'gateway.qr', status: 'info', message: body.qrCode, metadata: body });
+      app.eventBus.publish({ type: 'gateway.qr', companyId: body.companyId, connectionId, payload: { qrCode: body.qrCode } });
+      return sendJson(res, 200, { ok: true, connection });
+    }
+    await app.database.createMessageLog({ companyId: body.companyId, connectionId, type: body.type || 'gateway.log', status: body.status || 'info', message: body.message, error: body.error, metadata: body });
+    app.eventBus.publish({ type: body.type || 'gateway.log', companyId: body.companyId, connectionId, payload: body });
+    return sendJson(res, 200, { ok: true });
+  }
+
   if (url.pathname === '/sitemap.xml') {
     return sendText(res, 200, app.seo.sitemap(), 'application/xml');
   }
@@ -145,8 +176,10 @@ async function route(req, res) {
 
   if (url.pathname === '/api/disparos/health') {
     const queueHealth = await app.queue.health();
+    const gatewayHealth = await validateGatewayReadiness(app.config);
     const connections = await app.attozap.listConnections(ctx);
     const campaigns = await app.attozap.listCampaigns(ctx);
+    const blockers = [...new Set([...(queueHealth.blockers || []), ...(gatewayHealth.blockers || [])])];
     return sendJson(res, 200, {
       queueDriver: queueHealth.queueDriver,
       redis: queueHealth.redis,
@@ -160,8 +193,16 @@ async function route(req, res) {
       paused: queueHealth.paused || 0,
       workers: queueHealth.workers || 0,
       failedJobs: queueHealth.failedJobs || [],
-      productionReady: queueHealth.productionReady,
-      blockers: queueHealth.blockers || [],
+      productionReady: Boolean(queueHealth.productionReady && gatewayHealth.productionReady),
+      blockers,
+      gatewayReachable: gatewayHealth.gatewayReachable,
+      gatewayProvider: gatewayHealth.gatewayProvider,
+      baileysEnabled: gatewayHealth.baileysEnabled,
+      dryRunAllowed: gatewayHealth.dryRunAllowed,
+      activeGatewaySessions: gatewayHealth.activeGatewaySessions,
+      connectedSessions: gatewayHealth.connectedSessions,
+      qrRequiredSessions: gatewayHealth.qrRequiredSessions,
+      sessionStorageWritable: gatewayHealth.sessionStorageWritable,
       queue: queueHealth,
       connectedConnections: connections.filter((connection) => connection.status === 'connected').length,
       runningCampaigns: campaigns.filter((campaign) => campaign.status === 'running').length,

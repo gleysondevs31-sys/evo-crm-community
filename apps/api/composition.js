@@ -6,6 +6,7 @@ const { recoverAttozapDisparos } = require('../../modules/attozap/recovery');
 const { createAttoAiRuntime } = require('../../modules/atto-ai/runtime');
 const { createCrmModule } = require('../../modules/crm');
 const { createAttoZapModule } = require('../../modules/attozap');
+const { createGatewayClient } = require('../../modules/attozap/gateway/gateway-client');
 const { createAutomationModule } = require('../../modules/automation');
 const { createReportsModule } = require('../../modules/reports');
 const { createGamificationModule } = require('../../modules/gamification');
@@ -23,8 +24,9 @@ function createAttoFlowApp(options = {}) {
   }
   const eventBus = createDisparosEventBus();
   const attoAi = createAttoAiRuntime();
+  const gatewayClient = options.gatewayClient || createGatewayClient(config);
   const crm = createCrmModule({ database, attoAi });
-  const attozap = createAttoZapModule({ database, attoAi, queue, eventBus, config });
+  const attozap = createAttoZapModule({ database, attoAi, queue, eventBus, config, gatewayClient });
   const automation = createAutomationModule({ database, queue, attoAi });
   const reports = createReportsModule({ database, attoAi });
   const gamification = createGamificationModule({ database });
@@ -43,7 +45,7 @@ function createAttoFlowApp(options = {}) {
 
   const recovery = recoverAttozapDisparos({ database, queue, eventBus, context: { companyId: config.defaultCompanyId, userId: config.defaultUserId, role: 'owner', can: () => true } });
 
-  return { config, database, queue, eventBus, recovery, attoAi, crm, attozap, automation, reports, gamification, seo, admin, billing, integrations, omnichannel };
+  return { config, database, queue, eventBus, recovery, gatewayClient, attoAi, crm, attozap, automation, reports, gamification, seo, admin, billing, integrations, omnichannel };
 }
 
 module.exports = { createAttoFlowApp };

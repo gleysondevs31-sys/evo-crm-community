@@ -68,7 +68,7 @@ async function summarizeCampaign(database, companyId, campaignId) {
   return database.updateCampaign(companyId, campaignId, stats);
 }
 
-function createAttoZapModule({ database, queue, eventBus, config = {} }) {
+function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayClient = null }) {
   function emit(context, type, payload = {}) {
     return eventBus?.publish({ type, companyId: context.companyId, connectionId: payload.connectionId, campaignId: payload.campaignId, payload });
   }
@@ -162,7 +162,17 @@ function createAttoZapModule({ database, queue, eventBus, config = {} }) {
     async createConnection(context, input) {
       assertAllowed(context, 'criar conexão');
       const normalized = normalizeBrazilianPhone(input.phoneNumber || input.number);
-      const connection = await database.createWhatsappConnection({ companyId: context.companyId, name: input.name, phoneNumber: normalized.phone, status: normalized.valid ? 'qr_required' : 'error', dailyLimit: input.dailyLimit, hourlyLimit: input.hourlyLimit, delayMinMs: input.delayMinMs, delayMaxMs: input.delayMaxMs });
+      let connection = await database.createWhatsappConnection({ companyId: context.companyId, name: input.name, phoneNumber: normalized.phone, status: normalized.valid ? 'qr_required' : 'error', dailyLimit: input.dailyLimit, hourlyLimit: input.hourlyLimit, delayMinMs: input.delayMinMs, delayMaxMs: input.delayMaxMs });
+      if (normalized.valid && gatewayClient) {
+        try {
+          const gateway = await gatewayClient.createSession({ companyId: context.companyId, connectionId: connection.id, name: connection.name });
+          connection = await database.updateWhatsappConnection(context.companyId, connection.id, { status: gateway.status || connection.status, qrCode: gateway.qrCode || connection.qrCode, sessionPath: gateway.sessionPath || connection.sessionPath });
+        } catch (error) {
+          connection = await database.updateWhatsappConnection(context.companyId, connection.id, { status: 'error' });
+          await log(context, { type: 'connection.gateway_error', connectionId: connection.id, status: 'error', error: error.message });
+          if (config.attoEnv === 'production') throw error;
+        }
+      }
       await log(context, { type: 'connection.qr_generated', connectionId: connection.id, status: connection.status, message: connection.qrCode, error: normalized.error });
       emit(context, 'qr.generated', { connectionId: connection.id, qrCode: connection.qrCode });
       return connection;
@@ -324,7 +334,11 @@ function createAttoZapModule({ database, queue, eventBus, config = {} }) {
         await tx.updateMessageJob(context.companyId, messageJobId, { status: 'sending', attempt: job.attempt + 1, startedAt: new Date().toISOString() });
         await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sending' });
         await tx.createMessageLog({ companyId: context.companyId, type: 'job.started', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'sending' });
-        const providerMessageId = `local:${connection.id}:${messageJobId}:${Date.now()}`;
+        if (!gatewayClient) throw new Error('Gateway WhatsApp não configurado.');
+        const gatewayResult = await gatewayClient.sendMessage({ companyId: context.companyId, connectionId: connection.id, phone: contact.phone, message: job.message, mediaUrl: job.mediaUrl });
+        if (config.attoEnv === 'production' && gatewayResult.dryRun) throw new Error('Gateway retornou dryRun em production.');
+        const providerMessageId = gatewayResult.messageId || gatewayResult.providerMessageId;
+        if (!providerMessageId) throw new Error('Gateway não retornou providerMessageId. Mensagem não será marcada como sent.');
         await tx.updateMessageJob(context.companyId, messageJobId, { status: 'sent', providerMessageId, sentAt: new Date().toISOString() });
         await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sent', providerMessageId });
         await tx.updateWhatsappConnection(context.companyId, connection.id, { messagesSent: connection.messagesSent + 1, sentToday: connection.sentToday + 1, sentThisHour: connection.sentThisHour + 1, lastHeartbeatAt: new Date().toISOString() });
