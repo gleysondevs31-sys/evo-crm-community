@@ -5,13 +5,13 @@ const schema = {
   permissions: ['id', 'key', 'description'],
   memberships: ['id', 'company_id', 'user_id', 'role_id', 'manager_id', 'created_at'],
 
-  whatsapp_connections: ['id', 'company_id', 'name', 'phone_number', 'status', 'qr_code', 'connected_at', 'last_heartbeat_at', 'messages_sent', 'messages_received', 'total_failures', 'daily_limit', 'hourly_limit', 'delay_min_ms', 'delay_max_ms', 'sent_today', 'sent_this_hour', 'health_score', 'session_path', 'created_at', 'updated_at'],
+  whatsapp_connections: ['id', 'company_id', 'name', 'phone_number', 'status', 'qr_code', 'connected_at', 'last_heartbeat_at', 'messages_sent', 'messages_received', 'total_failures', 'daily_limit', 'hourly_limit', 'delay_min_ms', 'delay_max_ms', 'sent_today', 'sent_this_hour', 'health_score', 'health_state', 'sent_last_hour', 'failed_last_hour', 'delivered_rate', 'read_rate', 'reply_rate', 'failure_rate', 'consecutive_failures', 'last_failure_at', 'last_success_at', 'degraded_at', 'blocked_at', 'session_path', 'created_at', 'updated_at'],
   contact_lists: ['id', 'company_id', 'name', 'source', 'total_contacts', 'valid_contacts', 'invalid_contacts', 'duplicate_contacts', 'created_at', 'updated_at'],
   contacts: ['id', 'company_id', 'list_id', 'name', 'phone', 'raw_phone', 'tags', 'custom_fields', 'origin', 'status', 'validation_error', 'created_at', 'updated_at'],
   message_templates: ['id', 'company_id', 'name', 'body', 'media_url', 'variables', 'created_at', 'updated_at'],
-  campaigns: ['id', 'company_id', 'connection_id', 'contact_list_id', 'name', 'message', 'media_url', 'status', 'total_contacts', 'total_sent', 'total_delivered', 'total_failures', 'total_pending', 'scheduled_at', 'started_at', 'finished_at', 'created_at', 'updated_at'],
-  campaign_contacts: ['id', 'company_id', 'campaign_id', 'contact_id', 'status', 'created_at', 'updated_at'],
-  message_jobs: ['id', 'company_id', 'campaign_id', 'contact_id', 'connection_id', 'message', 'media_url', 'attempt', 'max_attempts', 'status', 'scheduled_at', 'idempotency_key', 'queue_job_id', 'provider_message_id', 'error', 'sent_at', 'created_at', 'updated_at'],
+  campaigns: ['id', 'company_id', 'connection_id', 'contact_list_id', 'name', 'message', 'media_url', 'status', 'total_contacts', 'total_sent', 'total_delivered', 'total_failures', 'total_pending', 'scheduled_at', 'started_at', 'finished_at', 'pause_reason', 'created_at', 'updated_at'],
+  campaign_contacts: ['id', 'company_id', 'campaign_id', 'contact_id', 'status', 'provider_message_id', 'provider_chat_id', 'ack_status', 'delivered_at', 'read_at', 'replied_at', 'failed_at', 'last_error_code', 'last_error_message', 'created_at', 'updated_at'],
+  message_jobs: ['id', 'company_id', 'campaign_id', 'contact_id', 'connection_id', 'message', 'media_url', 'attempt', 'max_attempts', 'status', 'scheduled_at', 'idempotency_key', 'queue_job_id', 'provider_message_id', 'provider_chat_id', 'ack_status', 'error', 'sent_at', 'delivered_at', 'read_at', 'failed_at', 'last_error_code', 'last_error_message', 'retry_reason', 'retry_count', 'created_at', 'updated_at'],
   message_logs: ['id', 'company_id', 'type', 'campaign_id', 'connection_id', 'message_job_id', 'contact_id', 'message', 'status', 'error', 'metadata', 'created_at'],
   audit_logs: ['id', 'company_id', 'actor_id', 'action', 'entity_type', 'entity_id', 'payload', 'created_at'],
 

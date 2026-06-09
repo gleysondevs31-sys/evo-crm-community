@@ -32,7 +32,7 @@ function requirePrismaClient() {
 function normalizeDateFields(record) {
   if (!record || typeof record !== 'object') return record;
   const output = { ...record };
-  for (const key of ['createdAt', 'updatedAt', 'connectedAt', 'lastHeartbeatAt', 'scheduledAt', 'startedAt', 'finishedAt', 'sentAt']) {
+  for (const key of ['createdAt', 'updatedAt', 'connectedAt', 'lastHeartbeatAt', 'scheduledAt', 'startedAt', 'finishedAt', 'sentAt', 'deliveredAt', 'readAt', 'repliedAt', 'failedAt', 'lastFailureAt', 'lastSuccessAt', 'degradedAt', 'blockedAt']) {
     if (output[key] instanceof Date) output[key] = output[key].toISOString();
   }
   return output;
@@ -125,6 +125,18 @@ function createPrismaDatabase(options = {}) {
           sentToday: input.sentToday ?? 0,
           sentThisHour: input.sentThisHour ?? 0,
           healthScore: input.healthScore ?? 100,
+          healthState: input.healthState || 'healthy',
+          sentLastHour: input.sentLastHour ?? 0,
+          failedLastHour: input.failedLastHour ?? 0,
+          deliveredRate: input.deliveredRate ?? 0,
+          readRate: input.readRate ?? 0,
+          replyRate: input.replyRate ?? 0,
+          failureRate: input.failureRate ?? 0,
+          consecutiveFailures: input.consecutiveFailures ?? 0,
+          lastFailureAt: input.lastFailureAt || null,
+          lastSuccessAt: input.lastSuccessAt || null,
+          degradedAt: input.degradedAt || null,
+          blockedAt: input.blockedAt || null,
           sessionPath: input.sessionPath || `storage/whatsapp-sessions/${input.companyId}/${createId('session')}`,
           companyId: input.companyId,
         }, 'wa')));
@@ -149,6 +161,7 @@ function createPrismaDatabase(options = {}) {
 
       async listContacts(companyId, listId) { return normalizeMany(await repos.contacts.findMany(companyId, listId ? { listId } : {})); },
       async getContact(companyId, contactId) { return normalizeDateFields(await repos.contacts.findById(companyId, contactId)); },
+      async findContactByPhone(companyId, phone) { return normalizeDateFields(await repos.contacts.findByCompanyPhone(companyId, phone)); },
       async createContact(input) {
         requireCompanyId(input.companyId);
         return normalizeDateFields(await repos.contacts.create(withDefaults({
@@ -194,6 +207,7 @@ function createPrismaDatabase(options = {}) {
           scheduledAt: input.scheduledAt || null,
           startedAt: input.startedAt || null,
           finishedAt: input.finishedAt || null,
+          pauseReason: input.pauseReason || null,
         }, 'camp')));
       },
       async updateCampaign(companyId, campaignId, patch) { return normalizeDateFields(await repos.campaigns.update(companyId, campaignId, patch)); },
@@ -202,12 +216,28 @@ function createPrismaDatabase(options = {}) {
       async listCampaignContacts(companyId, campaignId) { return normalizeMany(await repos.campaignContacts.findByCampaign(companyId, campaignId)); },
       async addCampaignContact(input) {
         requireCompanyId(input.companyId);
-        return normalizeDateFields(await repos.campaignContacts.create(withDefaults({ id: input.id, companyId: input.companyId, campaignId: input.campaignId, contactId: input.contactId, status: input.status || 'pending', providerMessageId: input.providerMessageId || null }, 'cc')));
+        return normalizeDateFields(await repos.campaignContacts.create(withDefaults({
+          id: input.id,
+          companyId: input.companyId,
+          campaignId: input.campaignId,
+          contactId: input.contactId,
+          status: input.status || 'pending',
+          providerMessageId: input.providerMessageId || null,
+          providerChatId: input.providerChatId || null,
+          ackStatus: input.ackStatus || null,
+          deliveredAt: input.deliveredAt || null,
+          readAt: input.readAt || null,
+          repliedAt: input.repliedAt || null,
+          failedAt: input.failedAt || null,
+          lastErrorCode: input.lastErrorCode || null,
+          lastErrorMessage: input.lastErrorMessage || null,
+        }, 'cc')));
       },
       async updateCampaignContact(companyId, campaignId, contactId, patch) { return normalizeDateFields(await repos.campaignContacts.updateByCampaignContact(companyId, campaignId, contactId, patch)); },
 
       async listMessageJobs(companyId, campaignId) { return normalizeMany(await repos.messageJobs.findByCampaign(companyId, campaignId)); },
       async getMessageJob(companyId, messageJobId) { return normalizeDateFields(await repos.messageJobs.findById(companyId, messageJobId)); },
+      async findMessageJobByProviderId(companyId, providerMessageId) { return normalizeDateFields(await repos.messageJobs.findByProviderMessageId(companyId, providerMessageId)); },
       async createMessageJob(input) {
         requireCompanyId(input.companyId);
         const existing = input.idempotencyKey ? await repos.messageJobs.findByIdempotencyKey(input.companyId, input.idempotencyKey) : null;
@@ -227,9 +257,18 @@ function createPrismaDatabase(options = {}) {
           queueJobId: input.queueJobId || input.idempotencyKey || null,
           idempotencyKey: input.idempotencyKey || input.queueJobId || null,
           providerMessageId: input.providerMessageId || null,
+          providerChatId: input.providerChatId || null,
+          ackStatus: input.ackStatus || null,
           error: input.error || null,
           startedAt: input.startedAt || null,
           sentAt: input.sentAt || null,
+          deliveredAt: input.deliveredAt || null,
+          readAt: input.readAt || null,
+          failedAt: input.failedAt || null,
+          lastErrorCode: input.lastErrorCode || null,
+          lastErrorMessage: input.lastErrorMessage || null,
+          retryReason: input.retryReason || null,
+          retryCount: input.retryCount || 0,
         }, 'job')));
       },
       async updateMessageJob(companyId, messageJobId, patch) { return normalizeDateFields(await repos.messageJobs.update(companyId, messageJobId, patch)); },

@@ -1,3 +1,6 @@
+const { classifyDeliveryError, CATEGORIES } = require('./errors/error-classifier');
+const { applyHealthEvent, adaptiveLimits } = require('./operations');
+
 const CONNECTION_STATUSES = ['pending', 'qr_required', 'connected', 'disconnected', 'reconnecting', 'blocked', 'error'];
 const CAMPAIGN_STATUSES = ['draft', 'scheduled', 'running', 'paused', 'completed', 'canceled', 'failed'];
 const CONTACT_STATUSES = ['valid', 'invalid', 'duplicate', 'blocked'];
@@ -49,6 +52,13 @@ function renderTemplate(message, variables) {
   return applySpintax(withVariables);
 }
 
+function ackToStatus(ackStatus) {
+  const value = String(ackStatus || '').toLowerCase();
+  if (['read', 'played', '4', '5'].includes(value)) return 'read';
+  if (['delivered', 'server_ack', 'delivery', '3'].includes(value)) return 'delivered';
+  return 'sent';
+}
+
 function randomDelay(min, max) {
   const safeMin = Number(min || 0);
   const safeMax = Math.max(Number(max || safeMin), safeMin);
@@ -59,10 +69,10 @@ async function summarizeCampaign(database, companyId, campaignId) {
   const contacts = await database.listCampaignContacts(companyId, campaignId);
   const stats = contacts.reduce((acc, item) => {
     acc.totalContacts += 1;
-    if (item.status === 'sent') acc.totalSent += 1;
-    if (item.status === 'delivered') acc.totalDelivered += 1;
-    if (item.status === 'failed') acc.totalFailures += 1;
-    if (['pending', 'queued', 'sending'].includes(item.status)) acc.totalPending += 1;
+    if (['sent', 'delivered', 'read', 'replied'].includes(item.status)) acc.totalSent += 1;
+    if (['delivered', 'read', 'replied'].includes(item.status)) acc.totalDelivered += 1;
+    if (['failed', 'blocked'].includes(item.status)) acc.totalFailures += 1;
+    if (['pending', 'queued', 'sending', 'retrying'].includes(item.status)) acc.totalPending += 1;
     return acc;
   }, { totalContacts: 0, totalSent: 0, totalDelivered: 0, totalFailures: 0, totalPending: 0 });
   return database.updateCampaign(companyId, campaignId, stats);
@@ -88,8 +98,10 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
     const connection = await database.getWhatsappConnection(context.companyId, connectionId);
     if (!connection) throw new Error('Conexão WhatsApp não encontrada.');
     if (connection.status !== 'connected') throw new Error('Conexão WhatsApp não está conectada.');
+    const limits = adaptiveLimits(connection);
+    if (limits.blocked) throw new Error('Conexão WhatsApp bloqueada por healthScore crítico.');
     if (connection.sentToday >= connection.dailyLimit) throw new Error('Limite diário da conexão atingido.');
-    if (connection.sentThisHour >= connection.hourlyLimit) throw new Error('Limite por hora da conexão atingido.');
+    if (connection.sentThisHour >= limits.hourlyLimit) throw new Error('Limite por hora adaptativo da conexão atingido.');
     return connection;
   }
 
@@ -319,39 +331,132 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
       return moduleApi.createCampaign(context, { ...campaign, name: `${campaign.name} (cópia)` });
     },
     async listLogs(context, filters = {}) { return database.listMessageLogs(context.companyId, filters); },
+    async handleMessageAck(context, payload) {
+      const status = ackToStatus(payload.ackStatus);
+      const nowIso = new Date().toISOString();
+      const job = await database.findMessageJobByProviderId(context.companyId, payload.providerMessageId);
+      if (!job) {
+        await log(context, { type: 'message.ack_unmatched', connectionId: payload.connectionId, status: 'warning', message: payload.providerMessageId, metadata: payload });
+        return { ok: false, matched: false };
+      }
+      const jobPatch = { ackStatus: payload.ackStatus, providerChatId: payload.providerChatId || job.providerChatId };
+      if (status === 'delivered') {
+        jobPatch.status = 'delivered';
+        jobPatch.deliveredAt = payload.deliveredAt || nowIso;
+      }
+      if (status === 'read') {
+        jobPatch.status = 'read';
+        jobPatch.readAt = payload.readAt || nowIso;
+        jobPatch.deliveredAt = job.deliveredAt || payload.deliveredAt || nowIso;
+      }
+      const updatedJob = await database.updateMessageJob(context.companyId, job.id, jobPatch);
+      const contactPatch = { status, ackStatus: payload.ackStatus, providerMessageId: job.providerMessageId, providerChatId: payload.providerChatId || job.providerChatId };
+      if (status === 'delivered') contactPatch.deliveredAt = jobPatch.deliveredAt;
+      if (status === 'read') {
+        contactPatch.readAt = jobPatch.readAt;
+        contactPatch.deliveredAt = jobPatch.deliveredAt;
+      }
+      await database.updateCampaignContact(context.companyId, job.campaignId, job.contactId, contactPatch);
+      const connection = await database.getWhatsappConnection(context.companyId, job.connectionId);
+      if (connection) await database.updateWhatsappConnection(context.companyId, connection.id, applyHealthEvent(connection, status));
+      await log(context, { type: `message.${status}`, campaignId: job.campaignId, connectionId: job.connectionId, messageJobId: job.id, contactId: job.contactId, status, metadata: payload });
+      await summarizeCampaign(database, context.companyId, job.campaignId);
+      emit(context, `message.${status}`, { campaignId: job.campaignId, connectionId: job.connectionId, messageJobId: job.id, contactId: job.contactId, ackStatus: payload.ackStatus });
+      return { ok: true, matched: true, job: updatedJob };
+    },
+    async handleInboundMessage(context, payload) {
+      const normalized = normalizeBrazilianPhone(payload.from || payload.phone || payload.providerChatId);
+      const contact = await database.findContactByPhone(context.companyId, normalized.phone);
+      if (!contact) {
+        await log(context, { type: 'message.inbound', connectionId: payload.connectionId, status: 'info', message: payload.message, metadata: payload });
+        return { ok: true, matched: false };
+      }
+      const campaigns = (await database.listCampaigns(context.companyId)).filter((campaign) => campaign.connectionId === payload.connectionId);
+      let matched = null;
+      for (const campaign of campaigns) {
+        const items = await database.listCampaignContacts(context.companyId, campaign.id);
+        matched = items.find((item) => item.contactId === contact.id && ['sent', 'delivered', 'read'].includes(item.status));
+        if (matched) {
+          await database.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'replied', repliedAt: payload.timestamp || new Date().toISOString(), providerChatId: payload.providerChatId });
+          await log(context, { type: 'message.replied', campaignId: campaign.id, connectionId: payload.connectionId, contactId: contact.id, status: 'replied', message: payload.message, metadata: payload });
+          const connection = await database.getWhatsappConnection(context.companyId, payload.connectionId);
+          if (connection) await database.updateWhatsappConnection(context.companyId, connection.id, { ...applyHealthEvent(connection, 'replied'), messagesReceived: (connection.messagesReceived || 0) + 1 });
+          await summarizeCampaign(database, context.companyId, campaign.id);
+          emit(context, 'message.replied', { campaignId: campaign.id, connectionId: payload.connectionId, contactId: contact.id });
+          return { ok: true, matched: true };
+        }
+      }
+      await log(context, { type: 'message.inbound', connectionId: payload.connectionId, contactId: contact.id, status: 'info', message: payload.message, metadata: payload });
+      return { ok: true, matched: false };
+    },
     async processMessageJob(context, messageJobId) {
-      return database.transaction(async (tx) => {
+      const result = await database.transaction(async (tx) => {
         const job = await tx.getMessageJob(context.companyId, messageJobId);
-        if (!job || job.status === 'sent') return job;
+        if (!job || ['sent', 'delivered', 'read', 'canceled', 'blocked'].includes(job.status) || job.providerMessageId) return job;
         const campaign = await tx.getCampaign(context.companyId, job.campaignId);
         const contact = await tx.getContact(context.companyId, job.contactId);
         if (!campaign || campaign.status !== 'running') throw new Error('Campanha não está ativa.');
         if (!contact || contact.status !== 'valid') throw new Error('Contato inválido.');
         const connection = await tx.getWhatsappConnection(context.companyId, job.connectionId);
         if (!connection || connection.status !== 'connected') throw new Error('Conexão WhatsApp não está conectada.');
+        const limits = adaptiveLimits(connection);
+        if (limits.blocked) throw new Error('Conexão bloqueada por healthScore.');
         if (connection.sentToday >= connection.dailyLimit) throw new Error('Limite diário da conexão atingido.');
-        if (connection.sentThisHour >= connection.hourlyLimit) throw new Error('Limite por hora da conexão atingido.');
+        if (connection.sentThisHour >= limits.hourlyLimit) throw new Error('Limite por hora adaptativo da conexão atingido.');
+        if (limits.state !== 'healthy') await tx.createMessageLog({ companyId: context.companyId, type: 'rate_limit.adapted', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: limits.state, metadata: limits });
         await tx.updateMessageJob(context.companyId, messageJobId, { status: 'sending', attempt: job.attempt + 1, startedAt: new Date().toISOString() });
         await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sending' });
-        await tx.createMessageLog({ companyId: context.companyId, type: 'job.started', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'sending' });
+        await tx.createMessageLog({ companyId: context.companyId, type: 'message.sending', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'sending' });
         if (!gatewayClient) throw new Error('Gateway WhatsApp não configurado.');
-        const gatewayResult = await gatewayClient.sendMessage({ companyId: context.companyId, connectionId: connection.id, phone: contact.phone, message: job.message, mediaUrl: job.mediaUrl });
-        if (config.attoEnv === 'production' && gatewayResult.dryRun) throw new Error('Gateway retornou dryRun em production.');
-        const providerMessageId = gatewayResult.messageId || gatewayResult.providerMessageId;
-        if (!providerMessageId) throw new Error('Gateway não retornou providerMessageId. Mensagem não será marcada como sent.');
-        await tx.updateMessageJob(context.companyId, messageJobId, { status: 'sent', providerMessageId, sentAt: new Date().toISOString() });
-        await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sent', providerMessageId });
-        await tx.updateWhatsappConnection(context.companyId, connection.id, { messagesSent: connection.messagesSent + 1, sentToday: connection.sentToday + 1, sentThisHour: connection.sentThisHour + 1, lastHeartbeatAt: new Date().toISOString() });
-        await tx.createMessageLog({ companyId: context.companyId, type: 'message.sent', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, message: job.message, status: 'sent' });
-        const updated = await summarizeCampaign(tx, context.companyId, campaign.id);
-        if (updated.totalPending === 0 && updated.totalFailures === 0) {
-          await tx.updateCampaign(context.companyId, campaign.id, { status: 'completed', finishedAt: new Date().toISOString() });
-          await tx.createMessageLog({ companyId: context.companyId, type: 'campaign.completed', campaignId: campaign.id, connectionId: connection.id, status: 'completed' });
-          emit(context, 'campaign.completed', { campaignId: campaign.id });
+        try {
+          const gatewayResult = await gatewayClient.sendMessage({ companyId: context.companyId, connectionId: connection.id, phone: contact.phone, message: job.message, mediaUrl: job.mediaUrl });
+          if (config.attoEnv === 'production' && gatewayResult.dryRun) throw new Error('Gateway retornou dryRun em production.');
+          const providerMessageId = gatewayResult.messageId || gatewayResult.providerMessageId;
+          if (!providerMessageId) throw new Error('Gateway não retornou providerMessageId. Mensagem não será marcada como sent.');
+          await tx.updateMessageJob(context.companyId, messageJobId, { status: 'sent', providerMessageId, providerChatId: gatewayResult.jid || gatewayResult.providerChatId, sentAt: new Date().toISOString() });
+          await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sent', providerMessageId, providerChatId: gatewayResult.jid || gatewayResult.providerChatId });
+          await tx.updateWhatsappConnection(context.companyId, connection.id, { ...applyHealthEvent(connection, 'sent'), messagesSent: connection.messagesSent + 1, sentToday: connection.sentToday + 1, sentThisHour: connection.sentThisHour + 1, sentLastHour: (connection.sentLastHour || 0) + 1, lastHeartbeatAt: new Date().toISOString() });
+          await tx.createMessageLog({ companyId: context.companyId, type: 'message.sent', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, message: job.message, status: 'sent', metadata: { providerMessageId } });
+          const updated = await summarizeCampaign(tx, context.companyId, campaign.id);
+          if (updated.totalPending === 0 && updated.totalFailures === 0) {
+            await tx.updateCampaign(context.companyId, campaign.id, { status: 'completed', finishedAt: new Date().toISOString() });
+            await tx.createMessageLog({ companyId: context.companyId, type: 'campaign.completed', campaignId: campaign.id, connectionId: connection.id, status: 'completed' });
+            emit(context, 'campaign.completed', { campaignId: campaign.id });
+          }
+          emit(context, 'message.sent', { campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id });
+          return tx.getMessageJob(context.companyId, messageJobId);
+        } catch (error) {
+          const classified = classifyDeliveryError(error);
+          const healthEvent = classified.category === CATEGORIES.CONNECTION_RISK ? (classified.shouldBlockConnection ? 'banned' : 'connection_failure') : classified.category === CATEGORIES.PERMANENT ? 'permanent_failure' : 'temporary_failure';
+          const healthPatch = applyHealthEvent(connection, healthEvent);
+          const basePatch = { error: error.message, lastErrorCode: classified.code, lastErrorMessage: classified.message, retryReason: classified.category, retryCount: (job.retryCount || 0) + 1 };
+          if (classified.category === CATEGORIES.TEMPORARY && (job.attempt + 1) < job.maxAttempts) {
+            await tx.updateMessageJob(context.companyId, messageJobId, { ...basePatch, status: 'retrying' });
+            await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'queued', lastErrorCode: classified.code, lastErrorMessage: classified.message });
+            await tx.updateWhatsappConnection(context.companyId, connection.id, { ...healthPatch, failedLastHour: (connection.failedLastHour || 0) + 1, totalFailures: (connection.totalFailures || 0) + 1 });
+            await tx.createMessageLog({ companyId: context.companyId, type: 'message.retrying', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'retrying', error: error.message, metadata: classified });
+            return { __retryError: error.message, messageJobId };
+          }
+          if (classified.category === CATEGORIES.CONNECTION_RISK) {
+            const connectionStatus = classified.shouldBlockConnection || healthPatch.healthState === 'blocked' ? 'blocked' : 'reconnecting';
+            await tx.updateMessageJob(context.companyId, messageJobId, { ...basePatch, status: classified.shouldBlockConnection ? 'blocked' : 'failed', failedAt: new Date().toISOString() });
+            await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: classified.shouldBlockConnection ? 'blocked' : 'failed', failedAt: new Date().toISOString(), lastErrorCode: classified.code, lastErrorMessage: classified.message });
+            await tx.updateWhatsappConnection(context.companyId, connection.id, { ...healthPatch, status: connectionStatus, failedLastHour: (connection.failedLastHour || 0) + 1, totalFailures: (connection.totalFailures || 0) + 1 });
+            await tx.updateCampaign(context.companyId, campaign.id, { status: 'paused', pauseReason: classified.shouldBlockConnection ? 'connection_blocked' : 'connection_degraded' });
+            await tx.createMessageLog({ companyId: context.companyId, type: classified.shouldBlockConnection ? 'connection.blocked' : 'connection.degraded', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: connectionStatus, error: error.message, metadata: classified });
+            emit(context, classified.shouldBlockConnection ? 'connection.blocked' : 'connection.degraded', { campaignId: campaign.id, connectionId: connection.id, reason: classified.code });
+            return tx.getMessageJob(context.companyId, messageJobId);
+          }
+          await tx.updateMessageJob(context.companyId, messageJobId, { ...basePatch, status: 'failed', failedAt: new Date().toISOString() });
+          await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'failed', failedAt: new Date().toISOString(), lastErrorCode: classified.code, lastErrorMessage: classified.message });
+          await tx.updateWhatsappConnection(context.companyId, connection.id, { ...healthPatch, failedLastHour: (connection.failedLastHour || 0) + 1, totalFailures: (connection.totalFailures || 0) + 1 });
+          await tx.createMessageLog({ companyId: context.companyId, type: 'message.failed', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'failed', error: error.message, metadata: classified });
+          await summarizeCampaign(tx, context.companyId, campaign.id);
+          return tx.getMessageJob(context.companyId, messageJobId);
         }
-        emit(context, 'message.sent', { campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id });
-        return tx.getMessageJob(context.companyId, messageJobId);
       });
+      if (result?.__retryError) throw new Error(result.__retryError);
+      return result;
     },
   };
 

@@ -42,6 +42,26 @@ async function notifyApi(connectionId, kind, body) {
   }).catch(() => {});
 }
 
+async function notifyMessageApi(kind, body) {
+  if (!config.apiBaseUrl || !config.internalApiToken) return;
+  await fetch(`${config.apiBaseUrl.replace(/\/$/, '')}/api/internal/whatsapp/messages/${kind}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.internalApiToken}` },
+    body: JSON.stringify(body),
+  }).catch(() => {});
+}
+
+function extractInboundText(message = {}) {
+  return message.conversation || message.extendedTextMessage?.text || message.imageMessage?.caption || message.videoMessage?.caption || '';
+}
+
+function mapAckStatus(update = {}) {
+  const value = update.status ?? update.receipt?.receiptTimestamp ?? update.update?.status;
+  if (value === 4 || value === 5 || value === 'read') return 'read';
+  if (value === 3 || value === 'delivered') return 'delivered';
+  return String(value || 'sent');
+}
+
 async function attachBaileys(session) {
   if (!config.baileysEnabled) return session;
   const { socket, sessionPath: path } = await createBaileysSession({ companyId: session.companyId, connectionId: session.connectionId }, {
@@ -64,9 +84,48 @@ async function attachBaileys(session) {
       await notifyApi(session.connectionId, 'status', { companyId: session.companyId, status: session.status, provider: session.provider, sessionPath: session.sessionPath });
       session.lastConnectionUpdate = update;
     },
-    onMessagesUpsert(event) {
+    async onMessagesUpsert(event) {
       session.lastMessageAt = new Date().toISOString();
       session.lastMessageEvent = { type: event.type, count: event.messages?.length || 0 };
+      for (const item of event.messages || []) {
+        if (item?.key?.fromMe) continue;
+        await notifyMessageApi('inbound', {
+          companyId: session.companyId,
+          connectionId: session.connectionId,
+          providerMessageId: item?.key?.id,
+          providerChatId: item?.key?.remoteJid,
+          from: String(item?.key?.remoteJid || '').split('@')[0],
+          message: extractInboundText(item?.message || {}),
+          timestamp: item?.messageTimestamp ? new Date(Number(item.messageTimestamp) * 1000).toISOString() : new Date().toISOString(),
+          raw: { key: item?.key, pushName: item?.pushName },
+        });
+      }
+    },
+    async onMessagesUpdate(events) {
+      for (const update of events || []) {
+        await notifyMessageApi('ack', {
+          companyId: session.companyId,
+          connectionId: session.connectionId,
+          providerMessageId: update?.key?.id,
+          providerChatId: update?.key?.remoteJid,
+          ackStatus: mapAckStatus(update),
+          deliveredAt: mapAckStatus(update) === 'delivered' ? new Date().toISOString() : undefined,
+          readAt: mapAckStatus(update) === 'read' ? new Date().toISOString() : undefined,
+          raw: update,
+        });
+      }
+    },
+    async onMessageReceiptUpdate(events) {
+      for (const update of events || []) {
+        await notifyMessageApi('ack', {
+          companyId: session.companyId,
+          connectionId: session.connectionId,
+          providerMessageId: update?.key?.id,
+          providerChatId: update?.key?.remoteJid,
+          ackStatus: mapAckStatus(update),
+          raw: update,
+        });
+      }
     },
   }, { sessionsDir: config.whatsappSessionsDir });
   session.socket = socket;

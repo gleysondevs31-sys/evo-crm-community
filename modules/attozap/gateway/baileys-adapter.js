@@ -11,6 +11,8 @@ async function createBaileysSession(input, handlers, settings) {
   socket.ev.on('creds.update', saveCreds);
   socket.ev.on('connection.update', (update) => handlers.onConnectionUpdate?.(update));
   socket.ev.on('messages.upsert', (event) => handlers.onMessagesUpsert?.(event));
+  socket.ev.on('messages.update', (event) => handlers.onMessagesUpdate?.(event));
+  socket.ev.on('message-receipt.update', (event) => handlers.onMessageReceiptUpdate?.(event));
 
   return { socket, sessionPath };
 }

@@ -113,6 +113,25 @@ async function route(req, res) {
     return sendJson(res, 200, { ok: true });
   }
 
+
+
+  const messageInternalMatch = url.pathname.match(/^\/api\/internal\/whatsapp\/messages\/(ack|inbound)$/);
+  if (messageInternalMatch && req.method === 'POST') {
+    const auth = req.headers.authorization || '';
+    if (!app.config.internalApiToken || auth !== `Bearer ${app.config.internalApiToken}`) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+    const [, action] = messageInternalMatch;
+    const body = await readBody(req);
+    if (!body.companyId) return sendJson(res, 400, { ok: false, error: 'companyId_required' });
+    const internalContext = { companyId: body.companyId, user: { role: 'owner' }, can: () => true };
+    if (action === 'ack') {
+      if (!body.providerMessageId) return sendJson(res, 400, { ok: false, error: 'providerMessageId_required' });
+      const result = await app.attozap.handleMessageAck(internalContext, body);
+      return sendJson(res, 200, result);
+    }
+    const result = await app.attozap.handleInboundMessage(internalContext, body);
+    return sendJson(res, 200, result);
+  }
+
   if (url.pathname === '/sitemap.xml') {
     return sendText(res, 200, app.seo.sitemap(), 'application/xml');
   }
@@ -180,6 +199,21 @@ async function route(req, res) {
     const connections = await app.attozap.listConnections(ctx);
     const campaigns = await app.attozap.listCampaigns(ctx);
     const blockers = [...new Set([...(queueHealth.blockers || []), ...(gatewayHealth.blockers || [])])];
+    const connectionHealth = connections.reduce((acc, connection) => {
+      const score = Number(connection.healthScore ?? 100);
+      acc.totalScore += score;
+      if ((connection.healthState || 'healthy') === 'blocked' || connection.status === 'blocked') acc.blocked += 1;
+      else if (score < 30) acc.critical += 1;
+      else if (score < 60) acc.degraded += 1;
+      else acc.healthy += 1;
+      return acc;
+    }, { healthy: 0, degraded: 0, critical: 0, blocked: 0, totalScore: 0 });
+    const allJobs = (await Promise.all(campaigns.map((campaign) => app.database.listMessageJobs(ctx.companyId, campaign.id)))).flat();
+    const sentOrBetter = allJobs.filter((job) => ['sent', 'delivered', 'read'].includes(job.status)).length;
+    const deliveredOrRead = allJobs.filter((job) => ['delivered', 'read'].includes(job.status)).length;
+    const failedJobs = allJobs.filter((job) => ['failed', 'blocked'].includes(job.status)).length;
+    const pendingAcks = allJobs.filter((job) => job.status === 'sent' && job.providerMessageId && !job.deliveredAt && !job.readAt).length;
+    const stuckJobs = allJobs.filter((job) => ['sending', 'retrying'].includes(job.status)).length;
     return sendJson(res, 200, {
       queueDriver: queueHealth.queueDriver,
       redis: queueHealth.redis,
@@ -207,6 +241,17 @@ async function route(req, res) {
       connectedConnections: connections.filter((connection) => connection.status === 'connected').length,
       runningCampaigns: campaigns.filter((campaign) => campaign.status === 'running').length,
       recovered: await app.recovery,
+      connectionsHealthy: connectionHealth.healthy,
+      connectionsDegraded: connectionHealth.degraded,
+      connectionsCritical: connectionHealth.critical,
+      connectionsBlocked: connectionHealth.blocked,
+      averageHealthScore: connections.length ? Math.round(connectionHealth.totalScore / connections.length) : 100,
+      deliveryRate: sentOrBetter ? Number((deliveredOrRead / sentOrBetter).toFixed(2)) : 0,
+      failureRate: allJobs.length ? Number((failedJobs / allJobs.length).toFixed(2)) : 0,
+      pendingAcks,
+      stuckJobs,
+      campaignsAutoPaused: campaigns.filter((campaign) => campaign.status === 'paused' && campaign.pauseReason).length,
+      recentConnectionRisks: (await app.attozap.listLogs(ctx)).filter((log) => ['connection.degraded', 'connection.blocked'].includes(log.type)).slice(0, 10),
     });
   }
 

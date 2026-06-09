@@ -19,7 +19,8 @@
     "smoke:send": "node scripts/smoke-send.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
-    "prisma:seed": "node prisma/seed.js"
+    "prisma:seed": "node prisma/seed.js",
+    "reconcile:disparos": "node scripts/reconcile-disparos.js"
   },
   "engines": {
     "node": ">=20"

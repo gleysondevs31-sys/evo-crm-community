@@ -127,6 +127,18 @@ function createDatabase() {
         sentToday: input.sentToday ?? 0,
         sentThisHour: input.sentThisHour ?? 0,
         healthScore: input.healthScore ?? 100,
+        healthState: input.healthState || 'healthy',
+        sentLastHour: input.sentLastHour ?? 0,
+        failedLastHour: input.failedLastHour ?? 0,
+        deliveredRate: input.deliveredRate ?? 0,
+        readRate: input.readRate ?? 0,
+        replyRate: input.replyRate ?? 0,
+        failureRate: input.failureRate ?? 0,
+        consecutiveFailures: input.consecutiveFailures ?? 0,
+        lastFailureAt: input.lastFailureAt || null,
+        lastSuccessAt: input.lastSuccessAt || null,
+        degradedAt: input.degradedAt || null,
+        blockedAt: input.blockedAt || null,
         sessionPath: input.sessionPath || `sessions/${input.companyId}/${createId('session')}`,
         createdAt: now(),
         updatedAt: now(),
@@ -179,6 +191,9 @@ function createDatabase() {
     },
     getContact(companyId, contactId) {
       return db.contacts.find((contact) => contact.companyId === companyId && contact.id === contactId);
+    },
+    findContactByPhone(companyId, phone) {
+      return db.contacts.find((contact) => contact.companyId === companyId && contact.phone === phone);
     },
     createContact(input) {
       const contact = {
@@ -247,6 +262,7 @@ function createDatabase() {
         scheduledAt: input.scheduledAt || null,
         startedAt: input.startedAt || null,
         finishedAt: input.finishedAt || null,
+        pauseReason: input.pauseReason || null,
         createdAt: now(),
         updatedAt: now(),
       };
@@ -277,6 +293,15 @@ function createDatabase() {
         campaignId: input.campaignId,
         contactId: input.contactId,
         status: input.status || 'pending',
+        providerMessageId: input.providerMessageId || null,
+        providerChatId: input.providerChatId || null,
+        ackStatus: input.ackStatus || null,
+        deliveredAt: input.deliveredAt || null,
+        readAt: input.readAt || null,
+        repliedAt: input.repliedAt || null,
+        failedAt: input.failedAt || null,
+        lastErrorCode: input.lastErrorCode || null,
+        lastErrorMessage: input.lastErrorMessage || null,
         createdAt: now(),
         updatedAt: now(),
       };
@@ -296,6 +321,9 @@ function createDatabase() {
     getMessageJob(companyId, jobId) {
       return db.messageJobs.find((job) => job.companyId === companyId && job.id === jobId);
     },
+    findMessageJobByProviderId(companyId, providerMessageId) {
+      return db.messageJobs.find((job) => job.companyId === companyId && job.providerMessageId === providerMessageId);
+    },
     createMessageJob(input) {
       const job = {
         id: createId('msgjob'),
@@ -312,8 +340,18 @@ function createDatabase() {
         idempotencyKey: input.idempotencyKey,
         queueJobId: input.queueJobId || input.idempotencyKey,
         providerMessageId: input.providerMessageId || null,
+        providerChatId: input.providerChatId || null,
+        ackStatus: input.ackStatus || null,
         sentAt: input.sentAt || null,
         startedAt: input.startedAt || null,
+        deliveredAt: input.deliveredAt || null,
+        readAt: input.readAt || null,
+        failedAt: input.failedAt || null,
+        lastErrorCode: input.lastErrorCode || null,
+        lastErrorMessage: input.lastErrorMessage || null,
+        retryReason: input.retryReason || null,
+        retryCount: input.retryCount || 0,
+        error: input.error || null,
         createdAt: now(),
         updatedAt: now(),
       };

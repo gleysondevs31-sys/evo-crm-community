@@ -50,9 +50,13 @@ enum CampaignContactStatus {
   queued
   sending
   sent
+  delivered
+  read
+  replied
   failed
   skipped
   canceled
+  blocked
 }
 
 enum MessageJobStatus {
@@ -60,9 +64,13 @@ enum MessageJobStatus {
   queued
   sending
   sent
+  delivered
+  read
   failed
+  retrying
   skipped
   canceled
+  blocked
 }
 
 model Company {
@@ -121,6 +129,18 @@ model WhatsAppConnection {
   sentToday        Int                     @default(0)
   sentThisHour     Int                     @default(0)
   healthScore      Int                     @default(100)
+  healthState      String                  @default("healthy")
+  sentLastHour     Int                     @default(0)
+  failedLastHour   Int                     @default(0)
+  deliveredRate    Float                   @default(0)
+  readRate         Float                   @default(0)
+  replyRate        Float                   @default(0)
+  failureRate      Float                   @default(0)
+  consecutiveFailures Int                  @default(0)
+  lastFailureAt    DateTime?
+  lastSuccessAt    DateTime?
+  degradedAt       DateTime?
+  blockedAt        DateTime?
   sessionPath      String
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
@@ -209,6 +229,7 @@ model Campaign {
   scheduledAt    DateTime?
   startedAt      DateTime?
   finishedAt     DateTime?
+  pauseReason    String?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   company        Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -230,6 +251,14 @@ model CampaignContact {
   contactId         String
   status            CampaignContactStatus @default(pending)
   providerMessageId String?
+  providerChatId    String?
+  ackStatus         String?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  repliedAt         DateTime?
+  failedAt          DateTime?
+  lastErrorCode     String?
+  lastErrorMessage  String?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   campaign          Campaign              @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -256,9 +285,18 @@ model MessageJob {
   idempotencyKey    String
   queueJobId        String
   providerMessageId String?
+  providerChatId    String?
+  ackStatus         String?
   error             String?
   startedAt         DateTime?
   sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  lastErrorCode     String?
+  lastErrorMessage  String?
+  retryReason       String?
+  retryCount        Int              @default(0)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   company           Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -269,6 +307,7 @@ model MessageJob {
   @@unique([companyId, idempotencyKey])
   @@index([companyId, status])
   @@index([companyId, campaignId])
+  @@index([companyId, providerMessageId])
   @@index([companyId, createdAt])
 }
 
