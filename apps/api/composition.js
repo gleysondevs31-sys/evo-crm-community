@@ -15,6 +15,8 @@ const { createAdminModule } = require('../../modules/admin');
 const { createBillingModule } = require('../../modules/billing');
 const { createIntegrationsModule } = require('../../modules/integrations');
 const { createOmnichannelModule } = require('../../modules/omnichannel');
+const { createAttozapAlerts } = require('../../modules/attozap/alerts');
+const telemetry = require('../../packages/telemetry');
 
 function createAttoFlowApp(options = {}) {
   const database = createDatabase(config);
@@ -23,10 +25,11 @@ function createAttoFlowApp(options = {}) {
     queue.assertReady().catch((error) => { setImmediate(() => { throw error; }); });
   }
   const eventBus = createDisparosEventBus();
+  const alerts = options.alerts || createAttozapAlerts();
   const attoAi = createAttoAiRuntime();
   const gatewayClient = options.gatewayClient || createGatewayClient(config);
   const crm = createCrmModule({ database, attoAi });
-  const attozap = createAttoZapModule({ database, attoAi, queue, eventBus, config, gatewayClient });
+  const attozap = createAttoZapModule({ database, attoAi, queue, eventBus, config, gatewayClient, alerts, telemetry });
   const automation = createAutomationModule({ database, queue, attoAi });
   const reports = createReportsModule({ database, attoAi });
   const gamification = createGamificationModule({ database });
@@ -45,7 +48,7 @@ function createAttoFlowApp(options = {}) {
 
   const recovery = recoverAttozapDisparos({ database, queue, eventBus, context: { companyId: config.defaultCompanyId, userId: config.defaultUserId, role: 'owner', can: () => true } });
 
-  return { config, database, queue, eventBus, recovery, gatewayClient, attoAi, crm, attozap, automation, reports, gamification, seo, admin, billing, integrations, omnichannel };
+  return { config, database, queue, eventBus, alerts, telemetry, recovery, gatewayClient, attoAi, crm, attozap, automation, reports, gamification, seo, admin, billing, integrations, omnichannel };
 }
 
 module.exports = { createAttoFlowApp };

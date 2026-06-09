@@ -3,10 +3,11 @@ const { readFileSync, existsSync } = require('node:fs');
 const { join, extname } = require('node:path');
 const { createAttoFlowApp } = require('./composition');
 const { getRequestContext, filterLeadsForContext } = require('../../packages/auth');
-const { logger } = require('../../packages/logger');
 const { pages } = require('../../packages/config/routes');
 const { schema, sensitiveTables } = require('../../packages/database/schema');
 const { validateGatewayReadiness } = require('../../modules/attozap/gateway/readiness');
+const { logger } = require('../../packages/logger');
+const { attachCorrelation } = require('../../packages/correlation');
 
 const app = createAttoFlowApp();
 const startedAt = new Date();
@@ -79,9 +80,91 @@ function context(req) {
   return getRequestContext(req, app.database);
 }
 
+function prometheusLine(name, value, labels = {}) {
+  const labelPairs = Object.entries(labels).filter(([, val]) => val !== undefined && val !== null).map(([key, val]) => `${key}="${String(val).replace(/"/g, '\\"')}"`);
+  return `${name}${labelPairs.length ? `{${labelPairs.join(',')}}` : ''} ${Number(value || 0)}`;
+}
+
+async function collectDisparosOps(app, ctx) {
+  const [queueHealth, gatewayHealth, connections, campaigns, logs] = await Promise.all([
+    app.queue.health(),
+    validateGatewayReadiness(app.config),
+    app.attozap.listConnections(ctx),
+    app.attozap.listCampaigns(ctx),
+    app.attozap.listLogs(ctx),
+  ]);
+  const allJobs = (await Promise.all(campaigns.map((campaign) => app.database.listMessageJobs(ctx.companyId, campaign.id)))).flat();
+  const health = connections.reduce((acc, connection) => {
+    const score = Number(connection.healthScore ?? 100);
+    acc.totalScore += score;
+    if ((connection.healthState || 'healthy') === 'blocked' || connection.status === 'blocked') acc.blocked += 1;
+    else if (score < 30) acc.critical += 1;
+    else if (score < 60) acc.degraded += 1;
+    else if (score < 80) acc.watch += 1;
+    else acc.healthy += 1;
+    return acc;
+  }, { healthy: 0, watch: 0, degraded: 0, critical: 0, blocked: 0, totalScore: 0 });
+  const ops = {
+    queueHealth,
+    gatewayHealth,
+    connections,
+    campaigns,
+    logs,
+    allJobs,
+    blockers: [...new Set([...(queueHealth.blockers || []), ...(gatewayHealth.blockers || [])])],
+    connectionsHealthy: health.healthy,
+    connectionsWatch: health.watch,
+    connectionsDegraded: health.degraded,
+    connectionsCritical: health.critical,
+    connectionsBlocked: health.blocked,
+    averageHealthScore: connections.length ? Math.round(health.totalScore / connections.length) : 100,
+    messagesSent: allJobs.filter((job) => ['sent', 'delivered', 'read'].includes(job.status)).length,
+    messagesFailed: allJobs.filter((job) => ['failed', 'blocked'].includes(job.status)).length,
+    messagesDelivered: allJobs.filter((job) => ['delivered', 'read'].includes(job.status)).length,
+    messagesRead: allJobs.filter((job) => job.status === 'read').length,
+    messagesReplied: (await Promise.all(campaigns.map((campaign) => app.database.listCampaignContacts(ctx.companyId, campaign.id)))).flat().filter((item) => item.status === 'replied').length,
+    pendingAcks: allJobs.filter((job) => job.status === 'sent' && job.providerMessageId && !job.deliveredAt && !job.readAt).length,
+    stuckJobs: allJobs.filter((job) => ['sending', 'retrying'].includes(job.status)).length,
+  };
+  ops.openAlerts = app.alerts.evaluate({ companyId: ctx.companyId, health: ops, queue: queueHealth, gateway: gatewayHealth });
+  return ops;
+}
+
+async function renderPrometheusMetrics(app, ctx) {
+  const ops = await collectDisparosOps(app, ctx);
+  const labels = { environment: app.config.attoEnv, companyId: ctx.companyId };
+  const lines = [
+    '# HELP attozap_campaigns_running Running campaigns', '# TYPE attozap_campaigns_running gauge',
+    prometheusLine('attozap_campaigns_running', ops.campaigns.filter((c) => c.status === 'running').length, labels),
+    prometheusLine('attozap_campaigns_paused', ops.campaigns.filter((c) => c.status === 'paused').length, labels),
+    prometheusLine('attozap_campaigns_completed', ops.campaigns.filter((c) => c.status === 'completed').length, labels),
+    prometheusLine('attozap_messages_sent_total', ops.messagesSent, labels),
+    prometheusLine('attozap_messages_failed_total', ops.messagesFailed, labels),
+    prometheusLine('attozap_messages_delivered_total', ops.messagesDelivered, labels),
+    prometheusLine('attozap_messages_read_total', ops.messagesRead, labels),
+    prometheusLine('attozap_messages_replied_total', ops.messagesReplied, labels),
+    prometheusLine('attozap_queue_waiting', ops.queueHealth.waiting || ops.queueHealth.queued || 0, labels),
+    prometheusLine('attozap_queue_active', ops.queueHealth.active || ops.queueHealth.running || 0, labels),
+    prometheusLine('attozap_queue_failed', ops.queueHealth.failed || 0, labels),
+    prometheusLine('attozap_connections_connected', ops.connections.filter((c) => c.status === 'connected').length, labels),
+    prometheusLine('attozap_connections_degraded', ops.connectionsDegraded, labels),
+    prometheusLine('attozap_connections_blocked', ops.connectionsBlocked, labels),
+    ...ops.connections.map((connection) => prometheusLine('attozap_connection_health_score', connection.healthScore ?? 100, { environment: app.config.attoEnv, companyId: ctx.companyId, connectionId: connection.id, status: connection.status })),
+    prometheusLine('attozap_gateway_up', ops.gatewayHealth.gatewayReachable ? 1 : 0, labels),
+    prometheusLine('attozap_redis_up', ops.queueHealth.redisConnected ? 1 : 0, labels),
+    prometheusLine('attozap_database_up', app.database ? 1 : 0, labels),
+    prometheusLine('attozap_worker_up', (ops.queueHealth.workers || 0) > 0 ? 1 : 0, labels),
+  ];
+  return lines.join('\n') + '\n';
+}
+
 async function route(req, res) {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  const correlationId = attachCorrelation(req, res);
   const ctx = context(req);
+  ctx.correlationId = correlationId;
+  ctx.ip = req.socket?.remoteAddress;
+  ctx.userAgent = req.headers['user-agent'];
 
 
   const internalMatch = url.pathname.match(/^\/api\/internal\/whatsapp\/connections\/([^/]+)\/(status|qr|heartbeat|log)$/);
@@ -122,7 +205,7 @@ async function route(req, res) {
     const [, action] = messageInternalMatch;
     const body = await readBody(req);
     if (!body.companyId) return sendJson(res, 400, { ok: false, error: 'companyId_required' });
-    const internalContext = { companyId: body.companyId, user: { role: 'owner' }, can: () => true };
+    const internalContext = { companyId: body.companyId, user: { role: 'owner' }, can: () => true, correlationId: body.correlationId || correlationId };
     if (action === 'ack') {
       if (!body.providerMessageId) return sendJson(res, 400, { ok: false, error: 'providerMessageId_required' });
       const result = await app.attozap.handleMessageAck(internalContext, body);
@@ -148,6 +231,10 @@ async function route(req, res) {
   if (url.pathname.startsWith('/assets/')) {
     const filePath = join(process.cwd(), 'apps/web', url.pathname);
     if (existsSync(filePath)) return sendStatic(res, filePath);
+  }
+
+  if (url.pathname === '/metrics') {
+    return sendText(res, 200, await renderPrometheusMetrics(app, ctx));
   }
 
   if (url.pathname === '/healthz' || url.pathname === '/health') {
@@ -253,6 +340,45 @@ async function route(req, res) {
       campaignsAutoPaused: campaigns.filter((campaign) => campaign.status === 'paused' && campaign.pauseReason).length,
       recentConnectionRisks: (await app.attozap.listLogs(ctx)).filter((log) => ['connection.degraded', 'connection.blocked'].includes(log.type)).slice(0, 10),
     });
+  }
+
+
+  if (url.pathname === '/api/disparos/alerts') {
+    return sendJson(res, 200, { alerts: app.alerts.list({ companyId: ctx.companyId }) });
+  }
+
+  const resolveAlertMatch = url.pathname.match(/^\/api\/disparos\/alerts\/([^/]+)\/resolve$/);
+  if (resolveAlertMatch && req.method === 'POST') {
+    const alert = app.alerts.resolve(resolveAlertMatch[1], { correlationId: ctx.correlationId, userId: ctx.userId });
+    if (!alert) return sendJson(res, 404, { ok: false, error: 'alert_not_found' });
+    await app.database.createAuditLog({ companyId: ctx.companyId, userId: ctx.userId, action: 'resolve alert', entityType: 'alert', entityId: alert.id, payload: { alert, correlationId: ctx.correlationId, ip: ctx.ip, userAgent: ctx.userAgent } });
+    return sendJson(res, 200, { ok: true, alert });
+  }
+
+  if (url.pathname === '/api/disparos/ops-dashboard') {
+    const ops = await collectDisparosOps(app, ctx);
+    const criticalLogs = ops.logs.filter((log) => ['connection.blocked', 'connection.degraded', 'message.failed', 'message.retrying'].includes(log.type)).slice(0, 20);
+    return sendJson(res, 200, {
+      health: { productionReady: Boolean(ops.queueHealth.productionReady && ops.gatewayHealth.productionReady), checkedAt: new Date().toISOString() },
+      blockers: ops.blockers,
+      campaigns: { running: ops.campaigns.filter((c) => c.status === 'running').length, paused: ops.campaigns.filter((c) => c.status === 'paused').length, stuck: ops.stuckJobs },
+      connections: { healthy: ops.connectionsHealthy, watch: ops.connectionsWatch, degraded: ops.connectionsDegraded, critical: ops.connectionsCritical, blocked: ops.connectionsBlocked, averageHealthScore: ops.averageHealthScore },
+      queue: ops.queueHealth,
+      gateway: ops.gatewayHealth,
+      redis: { connected: ops.queueHealth.redisConnected },
+      database: { driver: app.database.driver, up: true },
+      alerts: ops.openAlerts,
+      criticalLogs,
+      recommendations: ops.blockers.length ? ['Resolver blockers antes de executar disparos em produção.'] : ['Operação pronta para monitoramento contínuo.'],
+    });
+  }
+
+  if (url.pathname === '/api/disparos/readiness') {
+    const ops = await collectDisparosOps(app, ctx);
+    const criticalAlerts = ops.openAlerts.filter((alert) => alert.severity === 'critical' && alert.status === 'open');
+    const warnings = ops.openAlerts.filter((alert) => alert.severity !== 'critical').map((alert) => alert.type);
+    const ready = ops.blockers.length === 0 && criticalAlerts.length === 0 && Boolean(ops.queueHealth.productionReady && ops.gatewayHealth.productionReady);
+    return sendJson(res, 200, { ready, environment: app.config.attoEnv, database: { ok: true, driver: app.database.driver }, redis: { ok: Boolean(ops.queueHealth.redisConnected) }, queue: { ok: Boolean(ops.queueHealth.productionReady), driver: ops.queueHealth.queueDriver }, worker: { ok: (ops.queueHealth.workers || 0) > 0 || app.queue.driver === 'memory' }, gateway: { ok: Boolean(ops.gatewayHealth.gatewayReachable), provider: ops.gatewayHealth.gatewayProvider }, baileys: { ok: Boolean(ops.gatewayHealth.baileysEnabled) }, sessionStorage: { ok: Boolean(ops.gatewayHealth.sessionStorageWritable) }, alerts: { open: ops.openAlerts.length, critical: criticalAlerts.length }, blockers: ops.blockers, warnings, checkedAt: new Date().toISOString() });
   }
 
   if (url.pathname === '/api/disparos/overview') {
@@ -562,7 +688,7 @@ async function renderPage(html, pathname, ctx = { companyId: app.config.defaultC
 
 const server = http.createServer((req, res) => {
   route(req, res).catch((error) => {
-    logger.error('request failed', { error: error.message, path: req.url });
+    logger.error('request failed', { error, path: req.url, correlationId: req.headers['x-correlation-id'] });
     sendJson(res, 500, { ok: false, error: error.message });
   });
 });

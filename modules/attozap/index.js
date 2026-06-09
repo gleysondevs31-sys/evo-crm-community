@@ -78,15 +78,24 @@ async function summarizeCampaign(database, companyId, campaignId) {
   return database.updateCampaign(companyId, campaignId, stats);
 }
 
-function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayClient = null }) {
+function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayClient = null, alerts = null, telemetry = null }) {
   function emit(context, type, payload = {}) {
     return eventBus?.publish({ type, companyId: context.companyId, connectionId: payload.connectionId, campaignId: payload.campaignId, payload });
   }
 
   async function log(context, input) {
-    const entry = await database.createMessageLog({ companyId: context.companyId, ...input });
+    const metadata = { ...(input.metadata || {}), ...(context.correlationId ? { correlationId: context.correlationId } : {}) };
+    const entry = await database.createMessageLog({ companyId: context.companyId, ...input, metadata });
     emit(context, input.type, { ...input, logId: entry.id });
     return entry;
+  }
+
+  function withCorrelation(context, metadata = {}) {
+    return { ...metadata, ...(context.correlationId ? { correlationId: context.correlationId } : {}) };
+  }
+
+  async function audit(context, action, entityType, entityId, before, after) {
+    return database.createAuditLog?.({ companyId: context.companyId, userId: context.userId, action, entityType, entityId, payload: { before, after, correlationId: context.correlationId, ip: context.ip, userAgent: context.userAgent } });
   }
 
   async function ensureCompanyCanSend(context) {
@@ -146,6 +155,7 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
         mediaUrl: campaign.mediaUrl,
         attempt: messageJob.attempt,
         scheduledAt: messageJob.scheduledAt,
+        correlationId: context.correlationId,
       }, { jobId: queueJobId, delayMs: offset, scheduledAt: messageJob.scheduledAt, maxAttempts: messageJob.maxAttempts }));
     }
     await summarizeCampaign(store, context.companyId, campaign.id);
@@ -271,6 +281,7 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
       return database.updateCampaign(context.companyId, campaignId, input);
     },
     async startCampaign(context, campaignId) {
+      const span = telemetry?.startSpan?.('attozap.start_campaign', { companyId: context.companyId, campaignId });
       assertAllowed(context, 'iniciar campanha');
       await ensureCompanyCanSend(context);
       const campaign = await database.getCampaign(context.companyId, campaignId);
@@ -283,6 +294,9 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
         return enqueueCampaignMessages(context, updated, tx);
       });
       await log(context, { type: 'campaign.started', campaignId, connectionId: campaign.connectionId, status: 'running', message: `${jobs.length} mensagens enfileiradas.` });
+      await audit(context, 'start campaign', 'campaign', campaignId, campaign, { status: 'running', jobs: jobs.length });
+      telemetry?.incrementMetric?.('attozap_campaign_started_total', { companyId: context.companyId }, 1);
+      telemetry?.endSpan?.(span);
       emit(context, 'campaign.progress', { campaignId, queued: jobs.length });
       return moduleApi.getCampaign(context, campaignId);
     },
@@ -291,6 +305,7 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
       const campaign = await database.transaction(async (tx) => tx.updateCampaign(context.companyId, campaignId, { status: 'paused' }));
       await queue.pauseCampaign(campaignId);
       await log(context, { type: 'campaign.paused', campaignId, connectionId: campaign?.connectionId, status: 'paused' });
+      await audit(context, 'pause campaign', 'campaign', campaignId, null, campaign);
       return campaign;
     },
     async resumeCampaign(context, campaignId) {
@@ -301,6 +316,7 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
       await database.transaction(async (tx) => tx.updateCampaign(context.companyId, campaignId, { status: 'running' }));
       await queue.resumeCampaign(campaignId);
       await log(context, { type: 'campaign.resumed', campaignId, connectionId: campaign.connectionId, status: 'running' });
+      await audit(context, 'resume campaign', 'campaign', campaignId, campaign, { status: 'running' });
       return moduleApi.getCampaign(context, campaignId);
     },
     async cancelCampaign(context, campaignId) {
@@ -313,6 +329,7 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
       });
       await queue.cancelCampaign(campaignId);
       await log(context, { type: 'campaign.canceled', campaignId, connectionId: campaign?.connectionId, status: 'canceled' });
+      await audit(context, 'cancel campaign', 'campaign', campaignId, null, campaign);
       return campaign;
     },
     async deleteCampaign(context, campaignId) {
@@ -332,11 +349,12 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
     },
     async listLogs(context, filters = {}) { return database.listMessageLogs(context.companyId, filters); },
     async handleMessageAck(context, payload) {
+      const span = telemetry?.startSpan?.('attozap.ack_received', { companyId: context.companyId, providerMessageId: payload.providerMessageId });
       const status = ackToStatus(payload.ackStatus);
       const nowIso = new Date().toISOString();
       const job = await database.findMessageJobByProviderId(context.companyId, payload.providerMessageId);
       if (!job) {
-        await log(context, { type: 'message.ack_unmatched', connectionId: payload.connectionId, status: 'warning', message: payload.providerMessageId, metadata: payload });
+        await log(context, { type: 'message.ack_unmatched', connectionId: payload.connectionId, status: 'warning', message: payload.providerMessageId, metadata: withCorrelation(context, payload) });
         return { ok: false, matched: false };
       }
       const jobPatch = { ackStatus: payload.ackStatus, providerChatId: payload.providerChatId || job.providerChatId };
@@ -359,16 +377,19 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
       await database.updateCampaignContact(context.companyId, job.campaignId, job.contactId, contactPatch);
       const connection = await database.getWhatsappConnection(context.companyId, job.connectionId);
       if (connection) await database.updateWhatsappConnection(context.companyId, connection.id, applyHealthEvent(connection, status));
-      await log(context, { type: `message.${status}`, campaignId: job.campaignId, connectionId: job.connectionId, messageJobId: job.id, contactId: job.contactId, status, metadata: payload });
+      await log(context, { type: `message.${status}`, campaignId: job.campaignId, connectionId: job.connectionId, messageJobId: job.id, contactId: job.contactId, status, metadata: withCorrelation(context, payload) });
       await summarizeCampaign(database, context.companyId, job.campaignId);
+      telemetry?.incrementMetric?.(`attozap_messages_${status}_total`, { companyId: context.companyId }, 1);
+      telemetry?.endSpan?.(span);
       emit(context, `message.${status}`, { campaignId: job.campaignId, connectionId: job.connectionId, messageJobId: job.id, contactId: job.contactId, ackStatus: payload.ackStatus });
       return { ok: true, matched: true, job: updatedJob };
     },
     async handleInboundMessage(context, payload) {
+      const span = telemetry?.startSpan?.('attozap.inbound_received', { companyId: context.companyId, connectionId: payload.connectionId });
       const normalized = normalizeBrazilianPhone(payload.from || payload.phone || payload.providerChatId);
       const contact = await database.findContactByPhone(context.companyId, normalized.phone);
       if (!contact) {
-        await log(context, { type: 'message.inbound', connectionId: payload.connectionId, status: 'info', message: payload.message, metadata: payload });
+        await log(context, { type: 'message.inbound', connectionId: payload.connectionId, status: 'info', message: payload.message, metadata: withCorrelation(context, payload) });
         return { ok: true, matched: false };
       }
       const campaigns = (await database.listCampaigns(context.companyId)).filter((campaign) => campaign.connectionId === payload.connectionId);
@@ -378,18 +399,21 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
         matched = items.find((item) => item.contactId === contact.id && ['sent', 'delivered', 'read'].includes(item.status));
         if (matched) {
           await database.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'replied', repliedAt: payload.timestamp || new Date().toISOString(), providerChatId: payload.providerChatId });
-          await log(context, { type: 'message.replied', campaignId: campaign.id, connectionId: payload.connectionId, contactId: contact.id, status: 'replied', message: payload.message, metadata: payload });
+          await log(context, { type: 'message.replied', campaignId: campaign.id, connectionId: payload.connectionId, contactId: contact.id, status: 'replied', message: payload.message, metadata: withCorrelation(context, payload) });
           const connection = await database.getWhatsappConnection(context.companyId, payload.connectionId);
           if (connection) await database.updateWhatsappConnection(context.companyId, connection.id, { ...applyHealthEvent(connection, 'replied'), messagesReceived: (connection.messagesReceived || 0) + 1 });
           await summarizeCampaign(database, context.companyId, campaign.id);
+          telemetry?.incrementMetric?.('attozap_messages_replied_total', { companyId: context.companyId }, 1);
+          telemetry?.endSpan?.(span);
           emit(context, 'message.replied', { campaignId: campaign.id, connectionId: payload.connectionId, contactId: contact.id });
           return { ok: true, matched: true };
         }
       }
-      await log(context, { type: 'message.inbound', connectionId: payload.connectionId, contactId: contact.id, status: 'info', message: payload.message, metadata: payload });
+      await log(context, { type: 'message.inbound', connectionId: payload.connectionId, contactId: contact.id, status: 'info', message: payload.message, metadata: withCorrelation(context, payload) });
       return { ok: true, matched: false };
     },
     async processMessageJob(context, messageJobId) {
+      const span = telemetry?.startSpan?.('attozap.process_message_job', { companyId: context.companyId, messageJobId });
       const result = await database.transaction(async (tx) => {
         const job = await tx.getMessageJob(context.companyId, messageJobId);
         if (!job || ['sent', 'delivered', 'read', 'canceled', 'blocked'].includes(job.status) || job.providerMessageId) return job;
@@ -403,26 +427,27 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
         if (limits.blocked) throw new Error('Conexão bloqueada por healthScore.');
         if (connection.sentToday >= connection.dailyLimit) throw new Error('Limite diário da conexão atingido.');
         if (connection.sentThisHour >= limits.hourlyLimit) throw new Error('Limite por hora adaptativo da conexão atingido.');
-        if (limits.state !== 'healthy') await tx.createMessageLog({ companyId: context.companyId, type: 'rate_limit.adapted', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: limits.state, metadata: limits });
+        if (limits.state !== 'healthy') await tx.createMessageLog({ companyId: context.companyId, type: 'rate_limit.adapted', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: limits.state, metadata: withCorrelation(context, limits) });
         await tx.updateMessageJob(context.companyId, messageJobId, { status: 'sending', attempt: job.attempt + 1, startedAt: new Date().toISOString() });
         await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sending' });
         await tx.createMessageLog({ companyId: context.companyId, type: 'message.sending', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'sending' });
         if (!gatewayClient) throw new Error('Gateway WhatsApp não configurado.');
         try {
-          const gatewayResult = await gatewayClient.sendMessage({ companyId: context.companyId, connectionId: connection.id, phone: contact.phone, message: job.message, mediaUrl: job.mediaUrl });
+          const gatewayResult = await gatewayClient.sendMessage({ companyId: context.companyId, connectionId: connection.id, phone: contact.phone, message: job.message, mediaUrl: job.mediaUrl, correlationId: context.correlationId || job.correlationId });
           if (config.attoEnv === 'production' && gatewayResult.dryRun) throw new Error('Gateway retornou dryRun em production.');
           const providerMessageId = gatewayResult.messageId || gatewayResult.providerMessageId;
           if (!providerMessageId) throw new Error('Gateway não retornou providerMessageId. Mensagem não será marcada como sent.');
           await tx.updateMessageJob(context.companyId, messageJobId, { status: 'sent', providerMessageId, providerChatId: gatewayResult.jid || gatewayResult.providerChatId, sentAt: new Date().toISOString() });
           await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'sent', providerMessageId, providerChatId: gatewayResult.jid || gatewayResult.providerChatId });
           await tx.updateWhatsappConnection(context.companyId, connection.id, { ...applyHealthEvent(connection, 'sent'), messagesSent: connection.messagesSent + 1, sentToday: connection.sentToday + 1, sentThisHour: connection.sentThisHour + 1, sentLastHour: (connection.sentLastHour || 0) + 1, lastHeartbeatAt: new Date().toISOString() });
-          await tx.createMessageLog({ companyId: context.companyId, type: 'message.sent', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, message: job.message, status: 'sent', metadata: { providerMessageId } });
+          await tx.createMessageLog({ companyId: context.companyId, type: 'message.sent', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, message: job.message, status: 'sent', metadata: withCorrelation(context, { providerMessageId }) });
           const updated = await summarizeCampaign(tx, context.companyId, campaign.id);
           if (updated.totalPending === 0 && updated.totalFailures === 0) {
             await tx.updateCampaign(context.companyId, campaign.id, { status: 'completed', finishedAt: new Date().toISOString() });
             await tx.createMessageLog({ companyId: context.companyId, type: 'campaign.completed', campaignId: campaign.id, connectionId: connection.id, status: 'completed' });
             emit(context, 'campaign.completed', { campaignId: campaign.id });
           }
+          telemetry?.incrementMetric?.('attozap_messages_sent_total', { companyId: context.companyId }, 1);
           emit(context, 'message.sent', { campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id });
           return tx.getMessageJob(context.companyId, messageJobId);
         } catch (error) {
@@ -434,7 +459,7 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
             await tx.updateMessageJob(context.companyId, messageJobId, { ...basePatch, status: 'retrying' });
             await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'queued', lastErrorCode: classified.code, lastErrorMessage: classified.message });
             await tx.updateWhatsappConnection(context.companyId, connection.id, { ...healthPatch, failedLastHour: (connection.failedLastHour || 0) + 1, totalFailures: (connection.totalFailures || 0) + 1 });
-            await tx.createMessageLog({ companyId: context.companyId, type: 'message.retrying', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'retrying', error: error.message, metadata: classified });
+            await tx.createMessageLog({ companyId: context.companyId, type: 'message.retrying', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'retrying', error: error.message, metadata: withCorrelation(context, classified) });
             return { __retryError: error.message, messageJobId };
           }
           if (classified.category === CATEGORIES.CONNECTION_RISK) {
@@ -443,19 +468,25 @@ function createAttoZapModule({ database, queue, eventBus, config = {}, gatewayCl
             await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: classified.shouldBlockConnection ? 'blocked' : 'failed', failedAt: new Date().toISOString(), lastErrorCode: classified.code, lastErrorMessage: classified.message });
             await tx.updateWhatsappConnection(context.companyId, connection.id, { ...healthPatch, status: connectionStatus, failedLastHour: (connection.failedLastHour || 0) + 1, totalFailures: (connection.totalFailures || 0) + 1 });
             await tx.updateCampaign(context.companyId, campaign.id, { status: 'paused', pauseReason: classified.shouldBlockConnection ? 'connection_blocked' : 'connection_degraded' });
-            await tx.createMessageLog({ companyId: context.companyId, type: classified.shouldBlockConnection ? 'connection.blocked' : 'connection.degraded', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: connectionStatus, error: error.message, metadata: classified });
+            await tx.createMessageLog({ companyId: context.companyId, type: classified.shouldBlockConnection ? 'connection.blocked' : 'connection.degraded', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: connectionStatus, error: error.message, metadata: withCorrelation(context, classified) });
+            alerts?.create?.({ companyId: context.companyId, type: classified.shouldBlockConnection ? 'connection.blocked' : 'connection.critical', severity: 'critical', title: classified.shouldBlockConnection ? 'Conexão bloqueada' : 'Conexão degradada', message: error.message, source: 'worker', metadata: withCorrelation(context, { campaignId: campaign.id, connectionId: connection.id, classified }) });
             emit(context, classified.shouldBlockConnection ? 'connection.blocked' : 'connection.degraded', { campaignId: campaign.id, connectionId: connection.id, reason: classified.code });
             return tx.getMessageJob(context.companyId, messageJobId);
           }
           await tx.updateMessageJob(context.companyId, messageJobId, { ...basePatch, status: 'failed', failedAt: new Date().toISOString() });
           await tx.updateCampaignContact(context.companyId, campaign.id, contact.id, { status: 'failed', failedAt: new Date().toISOString(), lastErrorCode: classified.code, lastErrorMessage: classified.message });
           await tx.updateWhatsappConnection(context.companyId, connection.id, { ...healthPatch, failedLastHour: (connection.failedLastHour || 0) + 1, totalFailures: (connection.totalFailures || 0) + 1 });
-          await tx.createMessageLog({ companyId: context.companyId, type: 'message.failed', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'failed', error: error.message, metadata: classified });
+          await tx.createMessageLog({ companyId: context.companyId, type: 'message.failed', campaignId: campaign.id, connectionId: connection.id, messageJobId, contactId: contact.id, status: 'failed', error: error.message, metadata: withCorrelation(context, classified) });
           await summarizeCampaign(tx, context.companyId, campaign.id);
           return tx.getMessageJob(context.companyId, messageJobId);
         }
       });
-      if (result?.__retryError) throw new Error(result.__retryError);
+      telemetry?.endSpan?.(span);
+      if (result?.__retryError) {
+        const retryError = new Error(result.__retryError);
+        telemetry?.recordException?.(span, retryError);
+        throw retryError;
+      }
       return result;
     },
   };

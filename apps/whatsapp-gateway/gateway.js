@@ -3,6 +3,7 @@ const { join } = require('node:path');
 const { mkdirSync, readdirSync, statSync, accessSync, constants } = require('node:fs');
 const { config } = require('../../packages/config');
 const { createBaileysSession } = require('../../modules/attozap/gateway/baileys-adapter');
+const { logger } = require('../../packages/logger');
 
 const port = Number(process.env.WHATSAPP_GATEWAY_PORT || process.env.PORT || 8081);
 const sessions = new Map();
@@ -37,18 +38,18 @@ async function notifyApi(connectionId, kind, body) {
   if (!config.apiBaseUrl || !config.internalApiToken) return;
   await fetch(`${config.apiBaseUrl.replace(/\/$/, '')}/api/internal/whatsapp/connections/${connectionId}/${kind}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.internalApiToken}` },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.internalApiToken}`, ...(body.correlationId ? { 'x-correlation-id': body.correlationId } : {}) },
     body: JSON.stringify(body),
-  }).catch(() => {});
+  }).catch((error) => logger.warn('gateway internal API notification failed', { service: 'atto-whatsapp-gateway', error, connectionId, eventType: kind }));
 }
 
 async function notifyMessageApi(kind, body) {
   if (!config.apiBaseUrl || !config.internalApiToken) return;
   await fetch(`${config.apiBaseUrl.replace(/\/$/, '')}/api/internal/whatsapp/messages/${kind}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.internalApiToken}` },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.internalApiToken}`, ...(body.correlationId ? { 'x-correlation-id': body.correlationId } : {}) },
     body: JSON.stringify(body),
-  }).catch(() => {});
+  }).catch((error) => logger.warn('gateway message notification failed', { service: 'atto-whatsapp-gateway', error, eventType: kind }));
 }
 
 function extractInboundText(message = {}) {
@@ -236,5 +237,5 @@ http.createServer(async (req, res) => {
   }
 }).listen(port, '0.0.0.0', () => {
   bootstrapSessions().catch(() => {});
-  console.log(`ATTO WhatsApp Gateway listening on ${port}`);
+  logger.info('ATTO WhatsApp Gateway listening', { service: 'atto-whatsapp-gateway', port });
 });

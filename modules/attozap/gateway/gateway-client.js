@@ -10,7 +10,7 @@ class GatewayClient {
     if (!this.baseUrl) throw new Error('WHATSAPP_GATEWAY_URL não configurado.');
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: options.method || 'GET',
-      headers: { 'content-type': 'application/json', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) },
+      headers: { 'content-type': 'application/json', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), ...(options.correlationId ? { 'x-correlation-id': options.correlationId } : {}) },
       body: options.body ? JSON.stringify(options.body) : undefined,
       signal: AbortSignal.timeout(this.timeoutMs),
     });
@@ -22,11 +22,11 @@ class GatewayClient {
   }
 
   health() { return this.request('/healthz'); }
-  createSession(input) { return this.request('/sessions', { method: 'POST', body: input }); }
+  createSession(input) { return this.request('/sessions', { method: 'POST', body: input, correlationId: input.correlationId }); }
   getSession(connectionId) { return this.request(`/sessions/${connectionId}`); }
   disconnectSession({ connectionId }) { return this.request(`/sessions/${connectionId}/disconnect`, { method: 'POST', body: {} }); }
   sendMessage(input) {
-    return this.request(`/sessions/${input.connectionId}/send`, { method: 'POST', body: input });
+    return this.request(`/sessions/${input.connectionId}/send`, { method: 'POST', body: input, correlationId: input.correlationId });
   }
 }
 

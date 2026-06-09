@@ -295,7 +295,7 @@ function createPrismaDatabase(options = {}) {
       },
       async createAuditLog(input) {
         requireCompanyId(input.companyId);
-        return normalizeDateFields(await repos.auditLogs.create(withDefaults({ id: input.id, companyId: input.companyId, actorId: input.actorId || input.userId || null, action: input.action, payload: input.payload || {} }, 'audit')));
+        return normalizeDateFields(await repos.auditLogs.create(withDefaults({ id: input.id, companyId: input.companyId, actorId: input.actorId || input.userId || null, action: input.action, entityType: input.entityType || 'attozap', entityId: input.entityId || null, payload: input.payload || {} }, 'audit')));
       },
       async listAuditLogs(companyId) { return normalizeMany(await repos.auditLogs.findByCompany(companyId, { orderBy: { createdAt: 'desc' } })); },
 

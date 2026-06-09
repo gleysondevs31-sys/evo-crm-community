@@ -5,8 +5,8 @@ async function main() {
   const app = createAttoFlowApp({ registerQueueProcessors: false });
   const ctx = { companyId: app.config.defaultCompanyId, userId: app.config.defaultUserId, role: 'owner', can: () => true };
 
-  app.queue.process(app.config.queueMessageSend, async ({ companyId, messageJobId }) => {
-    const jobContext = { ...ctx, companyId };
+  app.queue.process(app.config.queueMessageSend, async ({ companyId, messageJobId, correlationId }) => {
+    const jobContext = { ...ctx, companyId, correlationId: correlationId || `worker-${Date.now()}` };
     return app.attozap.processMessageJob(jobContext, messageJobId);
   });
 
@@ -32,6 +32,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  logger.error('ATTOZAP worker failed', { error: error.message });
+  logger.error('ATTOZAP worker failed', { error });
   process.exit(1);
 });

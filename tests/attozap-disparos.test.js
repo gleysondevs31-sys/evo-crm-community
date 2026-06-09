@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { spawn } = require('node:child_process');
 const { createAttoFlowApp } = require('../apps/api/composition');
 const { normalizeBrazilianPhone, renderTemplate } = require('../modules/attozap');
 const { createQueue, validateQueueReadiness } = require('../packages/queue');
@@ -7,8 +8,22 @@ const { validateGatewayReadiness } = require('../modules/attozap/gateway/readine
 const { classifyDeliveryError, CATEGORIES } = require('../modules/attozap/errors/error-classifier');
 const { adaptiveLimits } = require('../modules/attozap/operations');
 const { reconcileAttozapDisparos } = require('../modules/attozap/reconciliation');
+const { createLogEntry } = require('../packages/logger');
+const telemetry = require('../packages/telemetry');
+const { getCorrelationId } = require('../packages/correlation');
 
 async function main() {
+
+  const logEntry = createLogEntry('info', 'teste', { service: 'test', correlationId: 'corr-test', companyId: 'company' });
+  assert.equal(logEntry.correlationId, 'corr-test');
+  assert.equal(JSON.parse(JSON.stringify(logEntry)).level, 'info');
+  assert.equal(getCorrelationId({ 'x-correlation-id': 'incoming-corr' }), 'incoming-corr');
+  const span = telemetry.startSpan('test.span', { companyId: 'company' });
+  telemetry.incrementMetric('test_metric_total', { companyId: 'company' }, 1);
+  telemetry.recordException(span, new Error('noop-ok'));
+  telemetry.endSpan(span);
+  assert.equal(span.exceptions.length, 1);
+
   assert.throws(() => createQueue({ attoEnv: 'production', queueDriver: 'memory', redisUrl: '', queueMessageSend: 'attozap.message.send' }), /QUEUE_DRIVER deve ser bullmq|memory é proibido/);
   const gatewayBlocked = await validateGatewayReadiness({ attoEnv: 'production', baileysEnabled: false, whatsappGatewayUrl: '', dryRun: true, whatsappSessionsDir: './storage/test-sessions' });
   assert.equal(gatewayBlocked.productionReady, false);
@@ -129,6 +144,50 @@ async function main() {
   await riskCase.failingApp.attozap.processMessageJob(riskCase.failCtx, riskCase.failJob.id);
   assert.equal((await riskCase.failingApp.database.getWhatsappConnection(riskCase.failCtx.companyId, riskCase.failConnection.id)).status, 'blocked');
   assert.equal((await riskCase.failingApp.database.getCampaign(riskCase.failCtx.companyId, riskCase.failCampaign.id)).status, 'paused');
+
+
+  const riskAlerts = riskCase.failingApp.alerts.list({ companyId: riskCase.failCtx.companyId, status: 'open' });
+  assert.equal(riskAlerts.some((alert) => alert.type === 'connection.blocked'), true);
+  const resolved = riskCase.failingApp.alerts.resolve(riskAlerts[0].id, { test: true });
+  assert.equal(resolved.status, 'resolved');
+  const audits = await app.database.listAuditLogs(ctx.companyId);
+  assert.equal(audits.some((entry) => entry.action === 'start campaign'), true);
+
+  const port = 19090 + Math.floor(Math.random() * 1000);
+  const child = spawn(process.execPath, ['apps/api/server.js'], { cwd: process.cwd(), env: { ...process.env, NODE_ENV: 'test', DATABASE_DRIVER: 'memory', QUEUE_DRIVER: 'memory', PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('api_start_timeout')), 5000);
+      child.stdout.on('data', (chunk) => {
+        if (String(chunk).includes('ATTO FLOW API listening')) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      child.stderr.on('data', (chunk) => {
+        if (String(chunk).includes('EADDRINUSE')) {
+          clearTimeout(timeout);
+          reject(new Error('port_in_use'));
+        }
+      });
+    });
+    const metrics = await fetch(`http://127.0.0.1:${port}/metrics`, { headers: { 'x-correlation-id': 'metrics-test' } }).then((res) => res.text());
+    assert.match(metrics, /attozap_campaigns_running/);
+    const readiness = await fetch(`http://127.0.0.1:${port}/api/disparos/readiness`).then((res) => res.json());
+    assert.equal(typeof readiness.ready, 'boolean');
+    const dashboard = await fetch(`http://127.0.0.1:${port}/api/disparos/ops-dashboard`).then((res) => res.json());
+    assert.equal(Boolean(dashboard.health), true);
+  } finally {
+    child.kill('SIGTERM');
+  }
+
+  const e2e = spawn(process.execPath, ['scripts/e2e-disparos.js'], { cwd: process.cwd(), env: { NODE_ENV: 'test', DATABASE_DRIVER: 'memory', QUEUE_DRIVER: 'memory' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const e2eOutput = await new Promise((resolve) => {
+    let output = '';
+    e2e.stdout.on('data', (chunk) => { output += String(chunk); });
+    e2e.on('close', () => resolve(output));
+  });
+  assert.match(e2eOutput, /skipped/);
 
   console.log('attozap-disparos tests passed');
 }

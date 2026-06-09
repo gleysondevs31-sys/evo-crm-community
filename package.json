@@ -20,7 +20,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
-    "reconcile:disparos": "node scripts/reconcile-disparos.js"
+    "reconcile:disparos": "node scripts/reconcile-disparos.js",
+    "e2e:disparos": "node scripts/e2e-disparos.js"
   },
   "engines": {
     "node": ">=20"
