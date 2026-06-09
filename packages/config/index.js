@@ -14,7 +14,7 @@ const config = {
   databaseUrl: process.env.DATABASE_URL || 'postgresql://attoflow:attoflow@127.0.0.1:5432/attoflow?schema=public',
   databaseDriver: process.env.DATABASE_DRIVER || (process.env.NODE_ENV === 'test' ? 'memory' : 'prisma'),
   redisUrl: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
-  queueDriver: process.env.QUEUE_DRIVER || process.env.ATTO_QUEUE_DRIVER || 'memory',
+  queueDriver: process.env.QUEUE_DRIVER || process.env.ATTO_QUEUE_DRIVER || (process.env.NODE_ENV === 'test' ? 'memory' : 'bullmq'),
   queueMessageSend: process.env.QUEUE_MESSAGE_SEND || 'attozap.message.send',
   queueConcurrency: numberFromEnv('QUEUE_CONCURRENCY', 5),
   queueMaxAttempts: numberFromEnv('QUEUE_MAX_ATTEMPTS', 3),

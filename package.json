@@ -14,6 +14,7 @@
     "gateway": "node apps/whatsapp-gateway/gateway.js",
     "test": "NODE_ENV=test DATABASE_DRIVER=memory node tests/attozap-disparos.test.js",
     "smoke:db": "DATABASE_DRIVER=prisma node scripts/smoke-db.js",
+    "smoke:queue": "QUEUE_DRIVER=bullmq node scripts/smoke-queue.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js"

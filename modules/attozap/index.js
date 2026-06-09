@@ -267,7 +267,7 @@ function createAttoZapModule({ database, queue, eventBus, config = {} }) {
     async pauseCampaign(context, campaignId) {
       assertAllowed(context, 'pausar campanha');
       const campaign = await database.transaction(async (tx) => tx.updateCampaign(context.companyId, campaignId, { status: 'paused' }));
-      await queue.pause((job) => job.payload?.campaignId === campaignId);
+      await queue.pauseCampaign(campaignId);
       await log(context, { type: 'campaign.paused', campaignId, connectionId: campaign?.connectionId, status: 'paused' });
       return campaign;
     },
@@ -277,7 +277,7 @@ function createAttoZapModule({ database, queue, eventBus, config = {} }) {
       if (!campaign) throw new Error('Campanha não encontrada.');
       await ensureConnectionReady(context, campaign.connectionId);
       await database.transaction(async (tx) => tx.updateCampaign(context.companyId, campaignId, { status: 'running' }));
-      await queue.resume((job) => job.payload?.campaignId === campaignId);
+      await queue.resumeCampaign(campaignId);
       await log(context, { type: 'campaign.resumed', campaignId, connectionId: campaign.connectionId, status: 'running' });
       return moduleApi.getCampaign(context, campaignId);
     },
@@ -289,7 +289,7 @@ function createAttoZapModule({ database, queue, eventBus, config = {} }) {
         for (const item of items) if (['pending', 'queued', 'sending'].includes(item.status)) await tx.updateCampaignContact(context.companyId, campaignId, item.contactId, { status: 'canceled' });
         return updated;
       });
-      await queue.cancel((job) => job.payload?.campaignId === campaignId);
+      await queue.cancelCampaign(campaignId);
       await log(context, { type: 'campaign.canceled', campaignId, connectionId: campaign?.connectionId, status: 'canceled' });
       return campaign;
     },

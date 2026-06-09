@@ -13,8 +13,11 @@ async function recoverAttozapDisparos({ database, queue, eventBus, context }) {
     for (const campaign of await tx.listCampaigns(companyId)) {
       if (campaign.status === 'running') {
         recovered.campaigns += 1;
+        const campaignContacts = await tx.listCampaignContacts(companyId, campaign.id);
         for (const job of await tx.listMessageJobs(companyId, campaign.id)) {
-          if (['pending', 'queued', 'sending'].includes(job.status)) {
+          const campaignContact = campaignContacts.find((item) => item.contactId === job.contactId);
+          const alreadySent = job.status === 'sent' || Boolean(job.providerMessageId) || campaignContact?.status === 'sent' || Boolean(campaignContact?.providerMessageId);
+          if (!alreadySent && ['pending', 'queued', 'sending'].includes(job.status)) {
             const queueJobId = job.queueJobId || `send:${companyId}:${campaign.id}:${job.contactId}`;
             await tx.updateMessageJob(companyId, job.id, { status: 'pending', queueJobId });
             await queue.add('attozap.message.send', {

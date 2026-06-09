@@ -15,9 +15,12 @@ const { createBillingModule } = require('../../modules/billing');
 const { createIntegrationsModule } = require('../../modules/integrations');
 const { createOmnichannelModule } = require('../../modules/omnichannel');
 
-function createAttoFlowApp() {
+function createAttoFlowApp(options = {}) {
   const database = createDatabase(config);
   const queue = createQueue(config);
+  if (config.attoEnv === 'production') {
+    queue.assertReady().catch((error) => { setImmediate(() => { throw error; }); });
+  }
   const eventBus = createDisparosEventBus();
   const attoAi = createAttoAiRuntime();
   const crm = createCrmModule({ database, attoAi });
@@ -31,9 +34,12 @@ function createAttoFlowApp() {
   const integrations = createIntegrationsModule();
   const omnichannel = createOmnichannelModule();
 
-  queue.process('campaign.dispatch', async ({ companyId, campaignId }) => ({ delivered: true, companyId, campaignId }));
-  queue.process(config.queueMessageSend, async ({ companyId, messageJobId }) => attozap.processMessageJob({ companyId, userId: config.defaultUserId, role: 'owner', can: () => true }, messageJobId));
-  queue.process('automation.followup', async ({ companyId, leadId, taskId }) => ({ created: true, companyId, leadId, taskId }));
+  const registerQueueProcessors = options.registerQueueProcessors ?? queue.driver === 'memory';
+  if (registerQueueProcessors) {
+    queue.process('campaign.dispatch', async ({ companyId, campaignId }) => ({ delivered: true, companyId, campaignId }));
+    queue.process(config.queueMessageSend, async ({ companyId, messageJobId }) => attozap.processMessageJob({ companyId, userId: config.defaultUserId, role: 'owner', can: () => true }, messageJobId));
+    queue.process('automation.followup', async ({ companyId, leadId, taskId }) => ({ created: true, companyId, leadId, taskId }));
+  }
 
   const recovery = recoverAttozapDisparos({ database, queue, eventBus, context: { companyId: config.defaultCompanyId, userId: config.defaultUserId, role: 'owner', can: () => true } });
 

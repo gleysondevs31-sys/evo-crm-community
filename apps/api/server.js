@@ -144,17 +144,27 @@ async function route(req, res) {
   }
 
   if (url.pathname === '/api/disparos/health') {
-    const metrics = await app.queue.metrics();
+    const queueHealth = await app.queue.health();
     const connections = await app.attozap.listConnections(ctx);
     const campaigns = await app.attozap.listCampaigns(ctx);
     return sendJson(res, 200, {
-      redis: metrics.redis,
-      queue: metrics,
-      workersActive: metrics.workers,
+      queueDriver: queueHealth.queueDriver,
+      redis: queueHealth.redis,
+      redisConnected: queueHealth.redisConnected,
+      queueName: queueHealth.queueName,
+      waiting: queueHealth.waiting || queueHealth.queued || 0,
+      delayed: queueHealth.delayed || 0,
+      active: queueHealth.active || queueHealth.running || 0,
+      failed: queueHealth.failed || 0,
+      completed: queueHealth.completed || 0,
+      paused: queueHealth.paused || 0,
+      workers: queueHealth.workers || 0,
+      failedJobs: queueHealth.failedJobs || [],
+      productionReady: queueHealth.productionReady,
+      blockers: queueHealth.blockers || [],
+      queue: queueHealth,
       connectedConnections: connections.filter((connection) => connection.status === 'connected').length,
       runningCampaigns: campaigns.filter((campaign) => campaign.status === 'running').length,
-      pendingJobs: metrics.queued,
-      failedJobs: metrics.failed,
       recovered: await app.recovery,
     });
   }

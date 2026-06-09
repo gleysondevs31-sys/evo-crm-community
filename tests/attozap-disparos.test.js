@@ -1,8 +1,14 @@
 const assert = require('node:assert/strict');
 const { createAttoFlowApp } = require('../apps/api/composition');
 const { normalizeBrazilianPhone, renderTemplate } = require('../modules/attozap');
+const { createQueue, validateQueueReadiness } = require('../packages/queue');
 
 async function main() {
+  assert.throws(() => createQueue({ attoEnv: 'production', queueDriver: 'memory', redisUrl: '', queueMessageSend: 'attozap.message.send' }), /QUEUE_DRIVER deve ser bullmq|memory é proibido/);
+  const blocked = validateQueueReadiness({ attoEnv: 'production', queueDriver: 'bullmq', redisUrl: '' }, { redisConnected: false });
+  assert.equal(blocked.productionReady, false);
+  assert.equal(blocked.blockers.some((item) => item.includes('REDIS_URL') || item.includes('Redis')), true);
+
   const app = createAttoFlowApp();
   const ctx = { companyId: app.config.defaultCompanyId, userId: app.config.defaultUserId, role: 'owner', can: () => true };
 
@@ -13,7 +19,7 @@ async function main() {
 
   assert.equal(renderTemplate('Olá {{nome}}, {tudo bem?|como vai?}', { nome: 'Ana' }), 'Olá Ana, tudo bem?');
 
-  const connection = await app.attozap.createConnection(ctx, { name: 'Teste', phoneNumber: '11977776666', delayMinMs: 0, delayMaxMs: 0, dailyLimit: 1, hourlyLimit: 1 });
+  const connection = await app.attozap.createConnection(ctx, { name: 'Teste', phoneNumber: '11977776666', delayMinMs: 0, delayMaxMs: 0, dailyLimit: 10, hourlyLimit: 10 });
   assert.equal(connection.status, 'qr_required');
   await app.attozap.updateConnectionStatus(ctx, connection.id, 'connected');
 
@@ -33,9 +39,12 @@ async function main() {
   const jobs = await app.queue.list({ campaignId: campaign.id });
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].id, `send:${ctx.companyId}:${campaign.id}:${jobs[0].payload.contactId}`);
+  const duplicateStart = await app.attozap.startCampaign(ctx, campaign.id).catch((error) => error);
+  assert.match(duplicateStart.message, /Campanha não pode iniciar/);
 
   await app.attozap.pauseCampaign(ctx, campaign.id);
   assert.equal((await app.queue.list({ campaignId: campaign.id }))[0].status, 'paused');
+  await assert.rejects(() => app.attozap.processMessageJob(ctx, jobs[0].payload.messageJobId), /Campanha não está ativa/);
   await app.attozap.resumeCampaign(ctx, campaign.id);
   assert.equal((await app.queue.list({ campaignId: campaign.id }))[0].status, 'queued');
 
@@ -45,11 +54,17 @@ async function main() {
   assert.equal(completed.status, 'completed');
   assert.equal(completed.totalSent, 1);
 
-  const blockedCampaign = await app.attozap.createCampaign(ctx, { name: 'Limite', connectionId: connection.id, contactListId: list.id, message: 'Olá {{nome}}' });
-  await assert.rejects(() => app.attozap.startCampaign(ctx, blockedCampaign.id), /Limite por hora|Limite diário/);
+  const canceledCampaign = await app.attozap.createCampaign(ctx, { name: 'Cancelar', connectionId: connection.id, contactListId: list.id, message: 'Olá {{nome}}' });
+  await app.attozap.startCampaign(ctx, canceledCampaign.id);
+  await app.attozap.cancelCampaign(ctx, canceledCampaign.id);
+  const canceledJobs = await app.queue.list({ campaignId: canceledCampaign.id });
+  assert.equal(canceledJobs[0].status, 'canceled');
+  await assert.rejects(() => app.attozap.processMessageJob(ctx, canceledJobs[0].payload.messageJobId), /Campanha não está ativa/);
 
-  const recovered = await app.recovery;
-  assert.equal(typeof recovered.jobs, 'number');
+  const sentRecovered = await app.recovery;
+  assert.equal(typeof sentRecovered.jobs, 'number');
+  const queueHealth = await app.queue.health();
+  assert.equal(queueHealth.queueDriver, 'memory');
 
   console.log('attozap-disparos tests passed');
 }
